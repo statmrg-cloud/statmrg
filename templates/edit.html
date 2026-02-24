@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}편집 - 전자책 생성기{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>전자책 편집</h2>
+  <div style="display:flex;gap:8px;">
+    <a href="/result/{{ task_id }}" class="btn">결과로 돌아가기</a>
+    <a href="/" class="btn">새로 만들기</a>
+  </div>
+</div>
+
+<div id="editLoading" class="card" style="text-align:center;">
+  <div class="spinner"></div>
+  <p style="margin-top:16px;">콘텐츠 불러오는 중...</p>
+</div>
+
+<div id="editContent" style="display:none;">
+
+  <!-- 책 기본 정보 편집 -->
+  <div class="card">
+    <h3 class="card-title">책 기본 정보</h3>
+    <div class="form-group">
+      <label>제목</label>
+      <input type="text" id="editBookTitle" class="edit-input" />
+    </div>
+    <div class="form-group">
+      <label>부제목</label>
+      <input type="text" id="editBookSubtitle" class="edit-input" />
+    </div>
+  </div>
+
+  <!-- 챕터 편집 -->
+  <div class="card">
+    <h3 class="card-title">챕터 편집</h3>
+    <p class="card-desc">각 챕터 제목과 본문을 직접 수정할 수 있습니다. 수정 후 저장하면 새 문서 파일이 생성됩니다.</p>
+
+    <!-- 챕터 탭 네비게이션 -->
+    <div class="chapter-tabs" id="chapterTabs"></div>
+
+    <!-- 챕터 편집 패널 -->
+    <div id="chapterPanels"></div>
+  </div>
+
+  <!-- 저장 설정 -->
+  <div class="card">
+    <h3 class="card-title">저장 및 문서 생성</h3>
+    <div class="form-group">
+      <label>출력 형식 선택</label>
+      <div class="format-options">
+        <label class="format-label">
+          <input type="checkbox" name="saveFormat" value="pdf" checked />
+          <span class="format-badge">PDF</span>
+        </label>
+        <label class="format-label">
+          <input type="checkbox" name="saveFormat" value="docx" />
+          <span class="format-badge">DOCX</span>
+        </label>
+        <label class="format-label">
+          <input type="checkbox" name="saveFormat" value="pptx" />
+          <span class="format-badge">PPTX</span>
+        </label>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-lg" id="saveEditBtn">저장 및 문서 재생성</button>
+    <div id="saveStatus" style="margin-top:12px;"></div>
+
+    <!-- 다운로드 버튼들 -->
+    <div id="editDownloadButtons" style="display:none;margin-top:16px;">
+      <h4 style="margin-bottom:8px;">생성된 파일 다운로드</h4>
+      <div id="editDownloadList" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="editError" class="card" style="display:none;">
+  <div class="text-error" style="text-align:center;">
+    <h3>불러오기 실패</h3>
+    <p id="editErrorMsg"></p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+var TASK_ID = '{{ task_id }}';
+var editData = null;
+var activeChapterIdx = 0;
+
+async function loadEditContent() {
+  try {
+    var res = await fetch('/api/edit/' + TASK_ID);
+    var json = await res.json();
+    document.getElementById('editLoading').style.display = 'none';
+
+    if (!json.success) {
+      document.getElementById('editError').style.display = 'block';
+      document.getElementById('editErrorMsg').textContent = json.error || '불러올 수 없습니다.';
+      return;
+    }
+
+    editData = json.data;
+    document.getElementById('editContent').style.display = 'block';
+    renderEditor();
+  } catch(e) {
+    document.getElementById('editLoading').style.display = 'none';
+    document.getElementById('editError').style.display = 'block';
+    document.getElementById('editErrorMsg').textContent = '오류: ' + e.message;
+  }
+}
+
+function renderEditor() {
+  var info = editData.book_info || {};
+  document.getElementById('editBookTitle').value = info.book_title || '';
+  document.getElementById('editBookSubtitle').value = info.subtitle || '';
+
+  var chapters = editData.chapters_content || [];
+  var tabsEl = document.getElementById('chapterTabs');
+  var panelsEl = document.getElementById('chapterPanels');
+  tabsEl.innerHTML = '';
+  panelsEl.innerHTML = '';
+
+  chapters.forEach(function(chData, i) {
+    var ch = chData.chapter || {};
+    var tabBtn = document.createElement('button');
+    tabBtn.className = 'chapter-tab-btn' + (i === 0 ? ' active' : '');
+    tabBtn.textContent = 'CH.' + (ch.chapter_num || (i+1));
+    tabBtn.setAttribute('data-idx', i);
+    tabBtn.onclick = function() { switchChapter(i); };
+    tabsEl.appendChild(tabBtn);
+
+    var panel = document.createElement('div');
+    panel.className = 'chapter-panel';
+    panel.id = 'chPanel_' + i;
+    panel.style.display = i === 0 ? 'block' : 'none';
+
+    panel.innerHTML = `
+      <div class="form-group">
+        <label>챕터 제목</label>
+        <input type="text" class="edit-input ch-title-input" data-idx="${i}" value="${escapeHtml(ch.title || '')}" />
+      </div>
+      <div class="form-group">
+        <label>목적 (독자가 얻는 것)</label>
+        <input type="text" class="edit-input ch-purpose-input" data-idx="${i}" value="${escapeHtml(ch.purpose || '')}" />
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>본문 내용 <small style="color:#999;">(=== 소제목 === 형식 그대로 편집 가능)</small></label>
+        <textarea class="edit-textarea ch-content-textarea" data-idx="${i}" rows="20">${escapeHtml(chData.content || '')}</textarea>
+      </div>
+    `;
+    panelsEl.appendChild(panel);
+  });
+}
+
+function switchChapter(idx) {
+  document.querySelectorAll('.chapter-tab-btn').forEach(function(btn) {
+    btn.classList.toggle('active', parseInt(btn.getAttribute('data-idx')) === idx);
+  });
+  document.querySelectorAll('.chapter-panel').forEach(function(panel, i) {
+    panel.style.display = i === idx ? 'block' : 'none';
+  });
+  activeChapterIdx = idx;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function collectEditData() {
+  var chapters = editData.chapters_content || [];
+  var updated = [];
+
+  document.querySelectorAll('.ch-content-textarea').forEach(function(ta) {
+    var idx = parseInt(ta.getAttribute('data-idx'));
+    var titleEl = document.querySelector('.ch-title-input[data-idx="' + idx + '"]');
+    var purposeEl = document.querySelector('.ch-purpose-input[data-idx="' + idx + '"]');
+    var orig = chapters[idx] || {};
+    updated[idx] = {
+      content: ta.value,
+      chapter: Object.assign({}, orig.chapter, {
+        title: titleEl ? titleEl.value : (orig.chapter || {}).title,
+        purpose: purposeEl ? purposeEl.value : (orig.chapter || {}).purpose,
+      })
+    };
+  });
+
+  return {
+    book_info: {
+      book_title: document.getElementById('editBookTitle').value,
+      subtitle: document.getElementById('editBookSubtitle').value,
+    },
+    chapters_content: updated,
+    output_formats: Array.from(document.querySelectorAll('input[name="saveFormat"]:checked')).map(function(cb){ return cb.value; }),
+  };
+}
+
+document.getElementById('saveEditBtn').addEventListener('click', async function() {
+  var btn = document.getElementById('saveEditBtn');
+  var statusEl = document.getElementById('saveStatus');
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+  statusEl.innerHTML = '';
+
+  try {
+    var payload = collectEditData();
+    var res = await fetch('/api/edit/' + TASK_ID, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    var d = await res.json();
+
+    if (d.success) {
+      statusEl.innerHTML = '<span style="color:#03c75a;">저장 완료! 문서가 재생성되었습니다.</span>';
+      var gf = d.generated_files || {};
+      var downloadEl = document.getElementById('editDownloadList');
+      downloadEl.innerHTML = '';
+      var hasFiles = false;
+      var labels = { pdf: 'PDF', docx: 'DOCX', pptx: 'PPTX' };
+      Object.keys(gf).forEach(function(fmt) {
+        if (!gf[fmt]) return;
+        hasFiles = true;
+        var a = document.createElement('a');
+        a.href = '/api/download/' + encodeURIComponent(gf[fmt]);
+        a.className = 'btn btn-primary';
+        a.textContent = (labels[fmt] || fmt.toUpperCase()) + ' 다운로드';
+        a.setAttribute('download', gf[fmt]);
+        downloadEl.appendChild(a);
+      });
+      if (hasFiles) {
+        document.getElementById('editDownloadButtons').style.display = 'block';
+      }
+    } else {
+      statusEl.innerHTML = '<span style="color:#e74c3c;">오류: ' + d.error + '</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:#e74c3c;">저장 실패: ' + e.message + '</span>';
+  }
+
+  btn.disabled = false;
+  btn.textContent = '저장 및 문서 재생성';
+});
+
+loadEditContent();
+</script>
+{% endblock %}

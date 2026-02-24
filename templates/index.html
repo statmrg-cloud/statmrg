@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <h2>AI 전자책 자동 생성기</h2>
+  <p>주제나 키워드를 입력하면 100페이지 이상 분량의 상품성 있는 전자책을 자동으로 만들어 드립니다.</p>
+</div>
+
+<!-- ChatGPT 로그인 상태 -->
+<div class="card login-card" id="loginSection">
+  <div class="login-status-row">
+    <div id="loginStatusArea">
+      {% if logged_in %}
+      <div class="login-badge logged-in">
+        <span class="badge-dot"></span>
+        <span>ChatGPT 로그인됨</span>
+      </div>
+      {% else %}
+      <div class="login-badge logged-out">
+        <span class="badge-dot"></span>
+        <span>로그인 필요</span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="login-actions">
+      {% if logged_in %}
+      <button class="btn btn-sm" id="logoutBtn">로그아웃</button>
+      {% else %}
+      <button class="btn btn-primary" id="loginBtn">ChatGPT로 로그인</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if not logged_in %}
+  <p class="card-desc" style="margin-top:12px;">ChatGPT 계정으로 로그인하면 별도 API 키 없이 바로 전자책을 생성할 수 있습니다.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3 class="card-title">전자책 주제 입력</h3>
+  <p class="card-desc">주제, 키워드, 또는 구체적인 문장을 입력하세요. AI가 유료 가치 분석부터 목차 설계, 본문 집필, 표지 생성까지 모두 자동으로 진행합니다.</p>
+
+  <form id="generateForm">
+    <div class="form-group">
+      <label for="topicInput">주제 / 키워드 / 문장</label>
+      <textarea id="topicInput" rows="4" placeholder="예시:&#10;- 직장인 퇴근 후 월 100만원 부수입 만드는 방법&#10;- 초보자를 위한 주식 투자 가이드&#10;- 1인 사업자 세금 절약 실전 노하우"></textarea>
+    </div>
+
+    <!-- 출력 형식 선택 -->
+    <div class="form-group">
+      <label>출력 형식 선택 (복수 선택 가능)</label>
+      <div class="format-options">
+        <label class="format-label">
+          <input type="checkbox" name="outputFormat" value="pdf" checked />
+          <span class="format-badge">PDF</span>
+          <small>인쇄/공유용</small>
+        </label>
+        <label class="format-label">
+          <input type="checkbox" name="outputFormat" value="docx" />
+          <span class="format-badge">DOCX</span>
+          <small>워드 편집용</small>
+        </label>
+        <label class="format-label">
+          <input type="checkbox" name="outputFormat" value="pptx" />
+          <span class="format-badge">PPTX</span>
+          <small>발표용 슬라이드</small>
+        </label>
+        <label class="format-label" style="opacity:0.4;cursor:not-allowed;" title="추후 지원 예정">
+          <input type="checkbox" name="outputFormat" value="hwpx" disabled />
+          <span class="format-badge">HWP</span>
+          <small>한글 문서 (준비중)</small>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-row form-options">
+      <label class="checkbox-label">
+        <input type="checkbox" id="includeImages" checked />
+        표지 &amp; 챕터 이미지 생성
+      </label>
+      <small class="option-note">이미지 생성 시 추가 시간이 소요됩니다</small>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-lg" id="generateBtn" {% if not logged_in %}disabled{% endif %}>
+      전자책 생성 시작
+    </button>
+    {% if not logged_in %}
+    <p class="text-muted" style="text-align:center;margin-top:8px;">ChatGPT 로그인 후 사용 가능합니다</p>
+    {% endif %}
+  </form>
+
+  <!-- 테스트 모드 -->
+  <div style="margin-top:16px;padding-top:16px;border-top:1px solid #eee;text-align:center;">
+    <button class="btn btn-sm" id="testGenerateBtn" style="color:#888;border-color:#ccc;">
+      🧪 테스트 모드 (AI 없이 즉시 생성)
+    </button>
+    <p style="font-size:12px;color:#aaa;margin-top:4px;">더미 데이터로 PDF·DOCX·PPTX 파일을 즉시 만들어 테스트합니다</p>
+  </div>
+</div>
+
+<div class="card info-card">
+  <h3 class="card-title">생성 과정 (자동)</h3>
+  <div class="steps-grid">
+    <div class="step-item">
+      <div class="step-num">1</div>
+      <div class="step-info">
+        <strong>유료 가치 판단</strong>
+        <span>무료 소비 vs 유료 전환 분석</span>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">2</div>
+      <div class="step-info">
+        <strong>목차 설계</strong>
+        <span>12~16챕터, 구매자 심리 기반</span>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">3</div>
+      <div class="step-info">
+        <strong>본문 집필</strong>
+        <span>챕터당 8,000~12,000자 풍부한 내용</span>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">4</div>
+      <div class="step-info">
+        <strong>마케팅 분석</strong>
+        <span>유통 전략 + 판매 소개문</span>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">5</div>
+      <div class="step-info">
+        <strong>이미지 생성</strong>
+        <span>표지 + 챕터 일러스트</span>
+      </div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">6</div>
+      <div class="step-info">
+        <strong>문서 제작</strong>
+        <span>PDF / DOCX / PPTX 출력</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 진행 오버레이 -->
+<div class="overlay" id="progressOverlay" style="display:none;">
+  <div class="overlay-card">
+    <div class="spinner"></div>
+    <h3 id="progressTitle">전자책 생성 중...</h3>
+    <p id="progressMessage">준비 중...</p>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    </div>
+    <span class="progress-detail" id="progressDetail">0 / 6 단계</span>
+  </div>
+</div>
+{% endblock %}

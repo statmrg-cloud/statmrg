@@ -1,0 +1,65 @@
+name: Windows EXE 빌드
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:   # 수동 실행 버튼
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: EXE 빌드
+        run: pyinstaller ebook_creator.spec --clean --noconfirm
+
+      - name: 빌드 결과 확인
+        run: |
+          if (Test-Path "dist\전자책생성기\전자책생성기.exe") {
+            Write-Host "빌드 성공!"
+          } else {
+            Write-Host "빌드 실패"
+            exit 1
+          }
+
+      - name: Windows 설치 가이드 복사
+        run: Copy-Item WINDOWS_README.md dist\전자책생성기\README.txt
+
+      - name: ZIP 압축
+        run: |
+          Compress-Archive -Path dist\전자책생성기\* -DestinationPath ebook-creator-windows-exe.zip
+
+      - name: 아티팩트 업로드 (다운로드 가능)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ebook-creator-windows-exe
+          path: ebook-creator-windows-exe.zip
+          retention-days: 30
+
+      - name: 릴리즈 생성 (태그 push 시)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ebook-creator-windows-exe.zip
+          name: "전자책 자동 생성기 ${{ github.ref_name }}"
+          body: |
+            ## 전자책 자동 생성기 Windows 버전
+
+            **Python 설치 불필요** — 압축 해제 후 `전자책생성기.exe` 더블클릭으로 실행
+
+            ### 지원 형식
+            - PDF / DOCX(워드) / PPTX(파워포인트) / HWP(한글)

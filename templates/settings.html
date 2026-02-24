@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}설정 - 전자책 생성기{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>설정</h2>
+  <a href="/" class="btn">돌아가기</a>
+</div>
+
+<!-- ChatGPT 로그인 상태 -->
+<div class="card login-card">
+  <h3 class="card-title">ChatGPT 계정</h3>
+  <div class="login-status-row">
+    <div id="loginStatusArea">
+      {% if logged_in %}
+      <div class="login-badge logged-in">
+        <span class="badge-dot"></span>
+        <span>ChatGPT 로그인됨</span>
+      </div>
+      {% else %}
+      <div class="login-badge logged-out">
+        <span class="badge-dot"></span>
+        <span>로그인 필요</span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="login-actions">
+      {% if logged_in %}
+      <button class="btn btn-sm" id="logoutBtn">로그아웃</button>
+      {% else %}
+      <button class="btn btn-primary" id="loginBtn">ChatGPT로 로그인</button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="card-title">AI 모델 설정</h3>
+  <div class="form-group">
+    <label for="modelSelect">텍스트 모델</label>
+    <select id="modelSelect">
+      <option value="gpt-5-codex" {% if config.model == 'gpt-5-codex' %}selected{% endif %}>GPT-5 Codex (추천)</option>
+      <option value="gpt-5-codex-mini" {% if config.model == 'gpt-5-codex-mini' %}selected{% endif %}>GPT-5 Codex Mini (빠름)</option>
+      <option value="gpt-5" {% if config.model == 'gpt-5' %}selected{% endif %}>GPT-5</option>
+      <option value="gpt-5.1-codex" {% if config.model == 'gpt-5.1-codex' %}selected{% endif %}>GPT-5.1 Codex</option>
+    </select>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="card-title">PDF 글꼴 설정</h3>
+
+  <div class="form-row-grid">
+    <div class="form-group">
+      <label for="fontSelect">글꼴</label>
+      <select id="fontSelect">
+        {% for font in fonts %}
+        <option value="{{ font }}" {% if config.pdf_font == font %}selected{% endif %}>{{ font }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="fontSizeInput">본문 크기 (pt)</label>
+      <input type="number" id="fontSizeInput" value="{{ config.pdf_font_size }}" min="8" max="20" step="0.5" />
+    </div>
+
+    <div class="form-group">
+      <label for="headingSizeInput">제목 크기 (pt)</label>
+      <input type="number" id="headingSizeInput" value="{{ config.pdf_heading_size }}" min="12" max="30" step="1" />
+    </div>
+
+    <div class="form-group">
+      <label for="subheadingSizeInput">소제목 크기 (pt)</label>
+      <input type="number" id="subheadingSizeInput" value="{{ config.pdf_subheading_size }}" min="10" max="24" step="1" />
+    </div>
+  </div>
+
+  <div class="form-row-grid">
+    <div class="form-group">
+      <label for="lineSpacingInput">행간 (배수)</label>
+      <input type="number" id="lineSpacingInput" value="{{ config.pdf_line_spacing }}" min="1.0" max="3.0" step="0.1" />
+    </div>
+
+    <div class="form-group">
+      <label for="marginTopInput">상단 여백 (pt)</label>
+      <input type="number" id="marginTopInput" value="{{ config.pdf_margin_top }}" min="30" max="120" step="6" />
+    </div>
+
+    <div class="form-group">
+      <label for="marginBottomInput">하단 여백 (pt)</label>
+      <input type="number" id="marginBottomInput" value="{{ config.pdf_margin_bottom }}" min="30" max="120" step="6" />
+    </div>
+
+    <div class="form-group">
+      <label for="marginLeftInput">좌측 여백 (pt)</label>
+      <input type="number" id="marginLeftInput" value="{{ config.pdf_margin_left }}" min="30" max="100" step="6" />
+    </div>
+
+    <div class="form-group">
+      <label for="marginRightInput">우측 여백 (pt)</label>
+      <input type="number" id="marginRightInput" value="{{ config.pdf_margin_right }}" min="30" max="100" step="6" />
+    </div>
+  </div>
+
+  <div class="preview-font-box" id="fontPreview">
+    <p style="font-size:16px; line-height:1.6;">
+      이것은 PDF 미리보기 텍스트입니다.<br>
+      선택한 설정에 따라 전자책의 본문이 이런 느낌으로 출력됩니다.<br>
+      글꼴 크기, 행간, 여백을 조정하여 가독성을 맞춰보세요.
+    </p>
+  </div>
+</div>
+
+<!-- 목표 페이지 수 설정 -->
+<div class="card">
+  <h3 class="card-title">목표 페이지 수</h3>
+  <p class="card-desc" style="margin-bottom:12px;color:#666;font-size:13px;">생성할 전자책의 목표 페이지 범위를 설정합니다. (A4 기준, 약 550자/페이지)</p>
+  <div class="form-row-grid">
+    <div class="form-group">
+      <label for="targetPagesMin">최소 페이지</label>
+      <input type="number" id="targetPagesMin" value="{{ config.target_pages_min }}" min="50" max="300" step="10" />
+    </div>
+    <div class="form-group">
+      <label for="targetPagesMax">최대 페이지</label>
+      <input type="number" id="targetPagesMax" value="{{ config.target_pages_max }}" min="50" max="300" step="10" />
+    </div>
+  </div>
+</div>
+
+<!-- AI 프롬프트 커스터마이즈 -->
+<div class="card">
+  <h3 class="card-title">AI 프롬프트 커스터마이즈</h3>
+  <p class="card-desc" style="margin-bottom:16px;color:#666;font-size:13px;">AI에게 전달되는 시스템 프롬프트를 수정할 수 있습니다. 비워두면 기본값이 사용됩니다.</p>
+
+  <div class="form-group">
+    <label for="promptChapterSystem">챕터 집필 시스템 프롬프트</label>
+    <textarea id="promptChapterSystem" rows="8" style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid #ddd;border-radius:6px;resize:vertical;line-height:1.5;">{{ config.prompt_chapter_system }}</textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="promptTocRules">목차 설계 규칙 프롬프트</label>
+    <textarea id="promptTocRules" rows="8" style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid #ddd;border-radius:6px;resize:vertical;line-height:1.5;">{{ config.prompt_toc_rules }}</textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="promptValueSystem">가치 분석 시스템 프롬프트</label>
+    <textarea id="promptValueSystem" rows="4" style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid #ddd;border-radius:6px;resize:vertical;line-height:1.5;">{{ config.prompt_value_system }}</textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="promptMarketingSystem">마케팅 시스템 프롬프트</label>
+    <textarea id="promptMarketingSystem" rows="3" style="width:100%;font-family:monospace;font-size:12px;padding:10px;border:1px solid #ddd;border-radius:6px;resize:vertical;line-height:1.5;">{{ config.prompt_marketing_system }}</textarea>
+  </div>
+
+  <button class="btn btn-sm" id="resetPromptsBtn" style="margin-top:4px;">기본값으로 초기화</button>
+</div>
+
+<button class="btn btn-primary btn-lg" id="saveSettingsBtn">설정 저장</button>
+<div id="saveStatus" style="margin-top:12px;text-align:center;"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 로그인 버튼
+var loginBtn = document.getElementById('loginBtn');
+if (loginBtn) {
+  loginBtn.addEventListener('click', async function() {
+    loginBtn.disabled = true;
+    loginBtn.textContent = '브라우저 열는 중...';
+    try {
+      await fetch('/api/auth/login', { method: 'POST' });
+      loginBtn.textContent = '로그인 대기 중...';
+      // 로그인 완료 폴링
+      var pollTimer = setInterval(async function() {
+        var r = await fetch('/api/auth/status');
+        var d = await r.json();
+        if (d.logged_in) {
+          clearInterval(pollTimer);
+          location.reload();
+        }
+      }, 2000);
+      setTimeout(function() { clearInterval(pollTimer); loginBtn.disabled = false; loginBtn.textContent = 'ChatGPT로 로그인'; }, 130000);
+    } catch(e) { loginBtn.disabled = false; loginBtn.textContent = 'ChatGPT로 로그인'; }
+  });
+}
+
+// 로그아웃 버튼
+var logoutBtn = document.getElementById('logoutBtn');
+if (logoutBtn) {
+  logoutBtn.addEventListener('click', async function() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    location.reload();
+  });
+}
+
+// 설정 저장
+document.getElementById('saveSettingsBtn').addEventListener('click', async function() {
+  var body = {
+    model: document.getElementById('modelSelect').value,
+    pdf_font: document.getElementById('fontSelect').value,
+    pdf_font_size: document.getElementById('fontSizeInput').value,
+    pdf_heading_size: document.getElementById('headingSizeInput').value,
+    pdf_subheading_size: document.getElementById('subheadingSizeInput').value,
+    pdf_line_spacing: document.getElementById('lineSpacingInput').value,
+    pdf_margin_top: document.getElementById('marginTopInput').value,
+    pdf_margin_bottom: document.getElementById('marginBottomInput').value,
+    pdf_margin_left: document.getElementById('marginLeftInput').value,
+    pdf_margin_right: document.getElementById('marginRightInput').value,
+    target_pages_min: document.getElementById('targetPagesMin').value,
+    target_pages_max: document.getElementById('targetPagesMax').value,
+    prompt_chapter_system: document.getElementById('promptChapterSystem').value,
+    prompt_toc_rules: document.getElementById('promptTocRules').value,
+    prompt_value_system: document.getElementById('promptValueSystem').value,
+    prompt_marketing_system: document.getElementById('promptMarketingSystem').value,
+  };
+  try {
+    var res = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    var data = await res.json();
+    document.getElementById('saveStatus').innerHTML = data.success ? '<span class="text-success">설정이 저장되었습니다!</span>' : '<span class="text-error">' + (data.error||'실패') + '</span>';
+  } catch(e) { document.getElementById('saveStatus').innerHTML = '<span class="text-error">저장 실패</span>'; }
+});
+
+// 프롬프트 기본값 초기화
+document.getElementById('resetPromptsBtn').addEventListener('click', async function() {
+  if (!confirm('프롬프트를 기본값으로 초기화하시겠습니까?')) return;
+  try {
+    var res = await fetch('/api/config/reset_prompts', { method: 'POST' });
+    var d = await res.json();
+    if (d.success) {
+      document.getElementById('promptChapterSystem').value = d.defaults.prompt_chapter_system || '';
+      document.getElementById('promptTocRules').value = d.defaults.prompt_toc_rules || '';
+      document.getElementById('promptValueSystem').value = d.defaults.prompt_value_system || '';
+      document.getElementById('promptMarketingSystem').value = d.defaults.prompt_marketing_system || '';
+      document.getElementById('saveStatus').innerHTML = '<span class="text-success">기본값으로 초기화되었습니다. 저장 버튼을 눌러 적용하세요.</span>';
+    }
+  } catch(e) { alert('초기화 실패: ' + e.message); }
+});
+</script>
+{% endblock %}

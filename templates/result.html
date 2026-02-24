@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}생성 결과 - 전자책 생성기{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>전자책 생성 결과</h2>
+  <div style="display:flex;gap:8px;">
+    <a href="/edit/{{ task_id }}" class="btn btn-primary" id="editBtn">내용 편집</a>
+    <a href="/" class="btn">새로 만들기</a>
+  </div>
+</div>
+
+<div id="resultLoading" class="card" style="text-align:center;">
+  <div class="spinner"></div>
+  <p style="margin-top:16px;">결과를 불러오는 중...</p>
+</div>
+
+<div id="resultContent" style="display:none;">
+
+  <!-- 다운로드 섹션 -->
+  <div class="card" id="downloadSection" style="display:none;">
+    <h3 class="card-title">파일 다운로드</h3>
+    <div id="bookTitleDisplay" style="font-size:18px;font-weight:700;margin-bottom:4px;"></div>
+    <div id="bookSubtitleDisplay" class="text-muted" style="margin-bottom:16px;"></div>
+    <div class="download-buttons" id="downloadButtons"></div>
+
+    <!-- 형식 추가 재생성 -->
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid #eee;">
+      <label style="font-size:13px;color:#666;display:block;margin-bottom:8px;">추가 형식으로 재생성</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="regenerate('pdf')">PDF 재생성</button>
+        <button class="btn btn-sm" onclick="regenerate('docx')">DOCX 재생성</button>
+        <button class="btn btn-sm" onclick="regenerate('pptx')">PPTX 재생성</button>
+        <button class="btn btn-sm" onclick="regenerate('hwpx')">HWP 재생성</button>
+      </div>
+      <div id="regenStatus" style="margin-top:8px;font-size:13px;"></div>
+    </div>
+  </div>
+
+  <!-- 분석 결과 -->
+  <div class="card" id="analysisSection">
+    <h3 class="card-title">유료 가치 분석</h3>
+    <div id="analysisContent"></div>
+  </div>
+
+  <!-- 목차 -->
+  <div class="card" id="tocSection">
+    <h3 class="card-title">목차 구조 (<span id="chaptersCount">0</span>챕터)</h3>
+    <div id="tocContent"></div>
+  </div>
+
+  <!-- 독자 심리 분석 -->
+  <div class="card" id="psychologySection">
+    <h3 class="card-title">구매자 심리 분석</h3>
+    <div id="psychologyContent"></div>
+  </div>
+
+  <!-- 마케팅 -->
+  <div class="card" id="marketingSection">
+    <h3 class="card-title">마케팅 &amp; 자연 유통 전략</h3>
+    <div id="marketingContent"></div>
+  </div>
+
+  <!-- 판매 소개문 -->
+  <div class="card highlight-card" id="salesSection">
+    <h3 class="card-title">판매 소개문 (복사해서 바로 사용)</h3>
+    <div id="salesCopy" class="sales-copy-box"></div>
+    <button class="btn btn-sm" id="copySalesBtn">복사하기</button>
+  </div>
+</div>
+
+<div id="errorSection" class="card" style="display:none;">
+  <div class="text-error" style="text-align:center;">
+    <h3>생성 실패</h3>
+    <p id="errorMessage"></p>
+    <a href="/" class="btn btn-primary" style="margin-top:16px;">다시 시도</a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var TASK_ID = '{{ task_id }}';
+
+var FORMAT_LABELS = { pdf: 'PDF', docx: 'DOCX', pptx: 'PPTX', hwpx: 'HWP' };
+var FORMAT_ICONS  = { pdf: '📄', docx: '📝', pptx: '📊', hwpx: '📋' };
+
+function renderDownloadButtons(generatedFiles) {
+  var container = document.getElementById('downloadButtons');
+  container.innerHTML = '';
+  var hasAny = false;
+  Object.keys(generatedFiles).forEach(function(fmt) {
+    var fn = generatedFiles[fmt];
+    if (!fn) return;
+    hasAny = true;
+    var a = document.createElement('a');
+    a.href = '/api/download/' + encodeURIComponent(fn);
+    a.className = 'btn btn-primary download-btn';
+    a.innerHTML = (FORMAT_ICONS[fmt] || '') + ' ' + (FORMAT_LABELS[fmt] || fmt.toUpperCase()) + ' 다운로드';
+    a.setAttribute('download', fn);
+    container.appendChild(a);
+  });
+  if (!hasAny) {
+    container.innerHTML = '<p class="text-muted">생성된 파일이 없습니다.</p>';
+  }
+}
+
+async function regenerate(fmt) {
+  var statusEl = document.getElementById('regenStatus');
+  statusEl.textContent = fmt.toUpperCase() + ' 생성 중...';
+  try {
+    var res = await fetch('/api/regenerate_format/' + TASK_ID, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format: fmt })
+    });
+    var d = await res.json();
+    if (d.success) {
+      statusEl.innerHTML = '<span style="color:#03c75a;">' + fmt.toUpperCase() + ' 생성 완료!</span>';
+      // 다운로드 버튼 갱신
+      var res2 = await fetch('/api/result/' + TASK_ID);
+      var d2 = await res2.json();
+      if (d2.success) renderDownloadButtons(d2.data.generated_files || {});
+    } else {
+      statusEl.innerHTML = '<span style="color:#e74c3c;">실패: ' + d.error + '</span>';
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:#e74c3c;">오류: ' + e.message + '</span>';
+  }
+}
+
+async function loadResult() {
+  try {
+    var res = await fetch('/api/result/' + TASK_ID);
+    var json = await res.json();
+    document.getElementById('resultLoading').style.display = 'none';
+
+    if (!json.success || json.data.error) {
+      document.getElementById('errorSection').style.display = 'block';
+      document.getElementById('errorMessage').textContent = json.data ? json.data.error : '결과를 불러올 수 없습니다.';
+      return;
+    }
+
+    var d = json.data;
+    document.getElementById('resultContent').style.display = 'block';
+
+    // 다운로드 섹션
+    var gf = d.generated_files || {};
+    if (d.pdf_filename && !gf.pdf) gf.pdf = d.pdf_filename;
+    if (Object.keys(gf).length > 0) {
+      document.getElementById('downloadSection').style.display = 'block';
+      renderDownloadButtons(gf);
+    }
+
+    // 제목
+    var info = d.book_info || {};
+    document.getElementById('bookTitleDisplay').textContent = info.book_title || d.topic;
+    document.getElementById('bookSubtitleDisplay').textContent = info.subtitle || '';
+
+    // 챕터 수
+    document.getElementById('chaptersCount').textContent = d.chapters_count || 0;
+
+    // 분석 결과
+    var analysis = d.analysis || {};
+    var aHtml = '';
+    if (analysis.free_vs_paid) {
+      aHtml += '<div class="analysis-item"><strong>유료 전환 판단:</strong> ' + (analysis.free_vs_paid.verdict || '') + '</div>';
+      if (analysis.free_vs_paid.paid_conversion_points) {
+        aHtml += '<div class="analysis-item"><strong>유료 전환 포인트:</strong><ul>';
+        analysis.free_vs_paid.paid_conversion_points.forEach(function(p) { aHtml += '<li>' + p + '</li>'; });
+        aHtml += '</ul></div>';
+      }
+    }
+    if (analysis.problem_solved) {
+      var ps = analysis.problem_solved;
+      aHtml += '<div class="value-grid">';
+      aHtml += '<div class="value-item"><span class="value-label">시간 절약</span><span class="value-text">' + (ps.time || '') + '</span></div>';
+      aHtml += '<div class="value-item"><span class="value-label">비용 절감</span><span class="value-text">' + (ps.money || '') + '</span></div>';
+      aHtml += '<div class="value-item"><span class="value-label">감정 해결</span><span class="value-text">' + (ps.emotion || '') + '</span></div>';
+      aHtml += '</div>';
+    }
+    if (analysis.why_pay) {
+      aHtml += '<div class="analysis-item highlight"><strong>왜 돈 주고 사야 하는가:</strong><p>' + analysis.why_pay + '</p></div>';
+    }
+    document.getElementById('analysisContent').innerHTML = aHtml;
+
+    // 목차
+    var chapters = info.chapters || [];
+    var phaseColors = { '문제인식': '#e74c3c', '방법발견': '#f39c12', '실행': '#03c75a', '확신': '#3498db' };
+    var tHtml = '<div class="toc-list">';
+    chapters.forEach(function(ch) {
+      var color = phaseColors[ch.phase] || '#333';
+      tHtml += '<div class="toc-item">';
+      tHtml += '<span class="toc-phase" style="background:' + color + '">' + ch.phase + '</span>';
+      tHtml += '<span class="toc-num">CH.' + ch.chapter_num + '</span>';
+      tHtml += '<span class="toc-title">' + ch.title + '</span>';
+      tHtml += '</div>';
+    });
+    tHtml += '</div>';
+    document.getElementById('tocContent').innerHTML = tHtml;
+
+    // 독자 심리
+    var psych = info.reader_psychology || {};
+    var pHtml = '<div class="psychology-grid">';
+    if (psych.concerns) {
+      pHtml += '<div class="psych-col"><h4>고민</h4><ul>';
+      psych.concerns.forEach(function(c) { pHtml += '<li>' + c + '</li>'; });
+      pHtml += '</ul></div>';
+    }
+    if (psych.expectations) {
+      pHtml += '<div class="psych-col"><h4>기대</h4><ul>';
+      psych.expectations.forEach(function(e) { pHtml += '<li>' + e + '</li>'; });
+      pHtml += '</ul></div>';
+    }
+    if (psych.fears) {
+      pHtml += '<div class="psych-col"><h4>두려움</h4><ul>';
+      psych.fears.forEach(function(f) { pHtml += '<li>' + f + '</li>'; });
+      pHtml += '</ul></div>';
+    }
+    pHtml += '</div>';
+    document.getElementById('psychologyContent').innerHTML = pHtml;
+
+    // 마케팅
+    var mkt = d.marketing || {};
+    var mHtml = '';
+    if (mkt.content_topics) {
+      mHtml += '<h4>콘텐츠 연결 전략 (5개)</h4><div class="content-topics">';
+      mkt.content_topics.forEach(function(ct, i) {
+        mHtml += '<div class="topic-item"><span class="topic-num">' + (i+1) + '</span>';
+        mHtml += '<div><strong>' + ct.topic + '</strong><p class="hook-text">"' + ct.hook_sentence + '"</p></div></div>';
+      });
+      mHtml += '</div>';
+    }
+    if (mkt.natural_distribution) {
+      var nd = mkt.natural_distribution;
+      mHtml += '<div class="distribution-grid">';
+      if (nd.blog_questions) { mHtml += '<div><h4>블로그 질문</h4><ul>'; nd.blog_questions.forEach(function(q){mHtml+='<li>'+q+'</li>';}); mHtml+='</ul></div>'; }
+      if (nd.community_complaints) { mHtml += '<div><h4>커뮤니티 불만</h4><ul>'; nd.community_complaints.forEach(function(q){mHtml+='<li>'+q+'</li>';}); mHtml+='</ul></div>'; }
+      if (nd.sns_consumption) { mHtml += '<div><h4>SNS 소비</h4><ul>'; nd.sns_consumption.forEach(function(q){mHtml+='<li>'+q+'</li>';}); mHtml+='</ul></div>'; }
+      mHtml += '</div>';
+    }
+    document.getElementById('marketingContent').innerHTML = mHtml;
+
+    // 판매 소개문
+    if (mkt.sales_copy) {
+      document.getElementById('salesCopy').textContent = mkt.sales_copy;
+    }
+
+  } catch(e) {
+    document.getElementById('resultLoading').style.display = 'none';
+    document.getElementById('errorSection').style.display = 'block';
+    document.getElementById('errorMessage').textContent = '결과 로드 실패: ' + e.message;
+  }
+}
+
+document.getElementById('copySalesBtn').addEventListener('click', function() {
+  var text = document.getElementById('salesCopy').textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    document.getElementById('copySalesBtn').textContent = '복사됨!';
+    setTimeout(function() { document.getElementById('copySalesBtn').textContent = '복사하기'; }, 2000);
+  });
+});
+
+loadResult();
+</script>
+{% endblock %}

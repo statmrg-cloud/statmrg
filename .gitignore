@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+static/output/*
+token_data.json
+dist/
+build/
+*.zip
