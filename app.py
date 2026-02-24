@@ -5,6 +5,7 @@ ChatGPT OAuth PKCE 인증 기반
 """
 import os
 import sys
+import io
 import json
 import threading
 import uuid
@@ -139,15 +140,95 @@ def reset_prompts():
 
 
 # ============================================================
+# 참고 자료 추출 유틸리티
+# ============================================================
+def _extract_file_text(file_storage):
+    """업로드된 파일에서 텍스트 추출 (txt/md/pdf/docx 지원)"""
+    name = (file_storage.filename or '').lower()
+    raw = file_storage.read()
+    try:
+        if name.endswith('.pdf'):
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(raw))
+                return '\n'.join(page.extract_text() or '' for page in reader.pages)
+            except Exception:
+                return ''
+        elif name.endswith('.docx'):
+            try:
+                from docx import Document
+                doc = Document(io.BytesIO(raw))
+                return '\n'.join(p.text for p in doc.paragraphs)
+            except Exception:
+                return ''
+        else:  # .txt, .md, 기타
+            for enc in ('utf-8', 'utf-8-sig', 'cp949', 'euc-kr'):
+                try:
+                    return raw.decode(enc)
+                except Exception:
+                    pass
+            return raw.decode('utf-8', errors='replace')
+    except Exception:
+        return ''
+
+
+def _fetch_url_text(url, timeout=10):
+    """URL에서 텍스트 추출 (requests + BeautifulSoup)"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get(url.strip(), headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
+            tag.decompose()
+        return soup.get_text(separator='\n', strip=True)
+    except Exception as e:
+        print(f"[URL 추출 오류] {url}: {e}")
+        return ''
+
+
+# ============================================================
 # 전자책 생성 API
 # ============================================================
 @app.route('/api/generate', methods=['POST'])
 def start_generation():
     """전자책 생성 시작 (백그라운드)"""
-    data = request.json
-    topic = data.get('topic', '').strip()
-    include_images = data.get('include_images', True)
-    output_formats = data.get('output_formats', ['pdf'])  # 선택한 출력 형식들
+    # multipart/form-data 또는 application/json 모두 지원
+    if request.content_type and 'multipart/form-data' in request.content_type:
+        topic = request.form.get('topic', '').strip()
+        include_images = request.form.get('include_images', '1') not in ('0', 'false', 'False')
+        try:
+            output_formats = json.loads(request.form.get('output_formats', '["pdf"]'))
+        except Exception:
+            output_formats = ['pdf']
+
+        # 참고 파일 추출
+        ref_texts = []
+        for f in request.files.getlist('ref_files'):
+            if f and f.filename:
+                text = _extract_file_text(f)
+                if text.strip():
+                    ref_texts.append(f'[파일: {f.filename}]\n{text[:5000]}')
+
+        # 참고 링크 추출
+        ref_links_raw = request.form.get('ref_links', '').strip()
+        if ref_links_raw:
+            for url in ref_links_raw.splitlines():
+                url = url.strip()
+                if url.startswith('http'):
+                    text = _fetch_url_text(url)
+                    if text.strip():
+                        ref_texts.append(f'[URL: {url}]\n{text[:5000]}')
+
+        reference_materials = {'text': '\n\n'.join(ref_texts)} if ref_texts else None
+    else:
+        data = request.json or {}
+        topic = data.get('topic', '').strip()
+        include_images = data.get('include_images', True)
+        output_formats = data.get('output_formats', ['pdf'])
+        reference_materials = None
 
     if not topic:
         return jsonify({'success': False, 'error': '주제/키워드를 입력해주세요.'})
@@ -179,7 +260,8 @@ def start_generation():
             }
 
         try:
-            ebook_data = generate_ebook(model, topic, include_images, on_progress, config=config)
+            ebook_data = generate_ebook(model, topic, include_images, on_progress, config=config,
+                                        reference_materials=reference_materials)
 
             if ebook_data.get('error'):
                 progress_store[task_id] = {

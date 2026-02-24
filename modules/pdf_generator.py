@@ -187,6 +187,7 @@ class EbookPDFGenerator:
         self.output_dir = self.config.get('output_dir', './static/output')
         os.makedirs(self.output_dir, exist_ok=True)
         self._page_drawn = False  # 현재 페이지에 콘텐츠가 있는지 추적
+        self.chapter_pages = {}   # 챕터 번호 → 시작 페이지 (2-pass TOC 페이지 번호용)
 
     # ──────────────────────────────────────────────
     # 페이지 관리
@@ -315,19 +316,14 @@ class EbookPDFGenerator:
     # ──────────────────────────────────────────────
     # 메인 생성
     # ──────────────────────────────────────────────
-    def generate(self, ebook_data):
-        book_info = ebook_data.get('book_info', {})
-        title = book_info.get('book_title', '전자책')
-        safe_title = re.sub(r'[^\w가-힣\s-]', '', title)[:50].strip()
-        filename = f"{safe_title}.pdf"
-        filepath = os.path.join(self.output_dir, filename)
+    def _render_pages(self, c, ebook_data, skip_images=False):
+        """공통 렌더링 루틴 — skip_images=True이면 챕터 시작 이미지 생략 (1st pass용)"""
+        prologue = ebook_data.get('prologue', '')
+        epilogue = ebook_data.get('epilogue', '')
+        chapters_content = ebook_data.get('chapters_content', [])
+        chapter_images   = ebook_data.get('chapter_images', [])
 
-        c = canvas.Canvas(filepath, pagesize=A4)
-        c.setTitle(_safe_text(title))
-        self.y = self.page_height - self.margin_top
-        self._page_drawn = False
-
-        # 1. 표지 (항상 표시)
+        # 1. 표지
         self._draw_cover(c, ebook_data)
         c.showPage()
 
@@ -337,40 +333,76 @@ class EbookPDFGenerator:
         self._draw_toc(c, ebook_data)
         self._end_page_if_drawn(c)
 
-        # 3. 가치 요약
+        # 3. 프롤로그
+        if prologue and prologue.strip():
+            self.y = self.page_height - self.margin_top
+            self._page_drawn = False
+            self._draw_prologue(c, prologue)
+            self._end_page_if_drawn(c)
+
+        # 4. 가치 요약
         self.y = self.page_height - self.margin_top
         self._page_drawn = False
         self._draw_analysis_summary(c, ebook_data)
         self._end_page_if_drawn(c)
 
-        # 4. 챕터들
-        chapters_content = ebook_data.get('chapters_content', [])
-        chapter_images = ebook_data.get('chapter_images', [])
-
+        # 5. 챕터들
         for i, ch_data in enumerate(chapters_content):
             chapter = ch_data.get('chapter', {})
             content = ch_data.get('content', '')
-            img_url = chapter_images[i] if i < len(chapter_images) else None
+            img_url = (chapter_images[i] if i < len(chapter_images) else None) if not skip_images else None
+            num = i + 1
 
-            # 챕터 시작 페이지
             self.y = self.page_height - self.margin_top
             self._page_drawn = False
-            self._draw_chapter_start(c, chapter, i + 1, img_url)
+            self.chapter_pages[num] = c.getPageNumber()   # 챕터 시작 페이지 기록
+            self._draw_chapter_start(c, chapter, num, img_url)
             self._end_page_if_drawn(c)
 
-            # 챕터 본문 (여러 페이지 자동 처리)
             self.y = self.page_height - self.margin_top
             self._page_drawn = False
-            self._draw_chapter_content(c, content, i + 1)
+            self._draw_chapter_content(c, content, num)
             self._end_page_if_drawn(c)
 
-        # 5. 마케팅 부록
+        # 6. 에필로그
+        if epilogue and epilogue.strip():
+            self.y = self.page_height - self.margin_top
+            self._page_drawn = False
+            self._draw_epilogue(c, epilogue)
+            self._end_page_if_drawn(c)
+
+        # 7. 마케팅 부록
         self.y = self.page_height - self.margin_top
         self._page_drawn = False
         self._draw_marketing_page(c, ebook_data)
         self._end_page_if_drawn(c)
 
+    def generate(self, ebook_data):
+        import io as _io
+        book_info = ebook_data.get('book_info', {})
+        title = book_info.get('book_title', '전자책')
+        safe_title = re.sub(r'[^\w가-힣\s-]', '', title)[:50].strip()
+        filename = f"{safe_title}.pdf"
+        filepath = os.path.join(self.output_dir, filename)
+
+        # ── 1차 패스: BytesIO에 렌더링, 챕터 시작 페이지 수집 (이미지 생략)
+        self.chapter_pages = {}
+        buf = _io.BytesIO()
+        c_pass1 = canvas.Canvas(buf, pagesize=A4)
+        c_pass1.setTitle(_safe_text(title))
+        self.y = self.page_height - self.margin_top
+        self._page_drawn = False
+        self._render_pages(c_pass1, ebook_data, skip_images=True)
+        c_pass1.save()
+
+        # ── 2차 패스: 실제 파일에 렌더링, 1차 패스에서 수집한 챕터 페이지 번호 사용
+        c = canvas.Canvas(filepath, pagesize=A4)
+        c.setTitle(_safe_text(title))
+        self.y = self.page_height - self.margin_top
+        self._page_drawn = False
+        self._render_pages(c, ebook_data, skip_images=False)
         c.save()
+
         return filepath, filename
 
     # ──────────────────────────────────────────────
@@ -471,8 +503,6 @@ class EbookPDFGenerator:
     # 목차 (고급 디자인)
     # ──────────────────────────────────────────────
     def _draw_toc(self, c, ebook_data):
-        W = self.page_width
-
         # 헤더 배경 바
         c.setFillColor(HexColor('#1a1a2e'))
         c.rect(self.margin_left - 10, self.y - 8, self.content_width + 20, 38, fill=1, stroke=0)
@@ -490,6 +520,7 @@ class EbookPDFGenerator:
 
         chapters = ebook_data.get('book_info', {}).get('chapters', [])
         current_phase = None
+        has_page_nums = bool(self.chapter_pages)
 
         for i, ch in enumerate(chapters):
             self._check_page_break(c, 40)
@@ -505,10 +536,8 @@ class EbookPDFGenerator:
                     self.y -= 8
                 c.setFont(self.font_name, 8)
                 c.setFillColor(HexColor(color))
-                phase_label = f'▶  {phase}'
-                c.drawString(self.margin_left, self.y, phase_label)
+                c.drawString(self.margin_left, self.y, f'▶  {phase}')
                 self.y -= 16
-                # 얇은 구분선
                 c.setStrokeColor(HexColor('#eeeeee'))
                 c.setLineWidth(0.5)
                 c.line(self.margin_left, self.y + 2, self.margin_left + self.content_width, self.y + 2)
@@ -525,17 +554,36 @@ class EbookPDFGenerator:
             c.setFillColor(HexColor('#FFFFFF'))
             c.drawCentredString(badge_x, self.y + 2, str(num))
 
-            # 챕터 제목 (점선 리더로 공간 채움)
+            # 페이지 번호 (오른쪽)
+            pg_text = str(self.chapter_pages.get(num, '')) if has_page_nums else ''
+            pg_width = c.stringWidth(pg_text, self.font_name, 10) + 4 if pg_text else 0
+
+            # 챕터 제목 (제목 영역 = 전체 - 배지 - 페이지번호)
             title_x = self.margin_left + 24
-            available = self.content_width - 26
+            available = self.content_width - 26 - pg_width
             title_lines = self._wrap_text_by_width(c, ch_title, 10, available)
             display = title_lines[0] if title_lines else ch_title
             if len(title_lines) > 1:
-                display += '...'
-
+                display += '…'
             c.setFont(self.font_name, 10)
             c.setFillColor(HexColor('#333333'))
             c.drawString(title_x, self.y, display)
+
+            # 페이지 번호 우측 정렬
+            if pg_text:
+                pg_x = self.margin_left + self.content_width - pg_width
+                # 점선 리더
+                title_end_x = title_x + c.stringWidth(display, self.font_name, 10) + 4
+                dot_y = self.y + 3
+                c.setFont(self.font_name, 8)
+                c.setFillColor(HexColor('#cccccc'))
+                dot_x = title_end_x
+                while dot_x + 6 < pg_x - 4:
+                    c.drawString(dot_x, dot_y, '.')
+                    dot_x += 5
+                c.setFont(self.font_name, 10)
+                c.setFillColor(HexColor('#555555'))
+                c.drawString(pg_x, self.y, pg_text)
 
             self.y -= 22
             self._mark_drawn()
@@ -598,6 +646,42 @@ class EbookPDFGenerator:
             self.y -= 20
             self._draw_paragraph(c, why_pay, indent=10)
             self._mark_drawn()
+
+    # ──────────────────────────────────────────────
+    # 프롤로그
+    # ──────────────────────────────────────────────
+    def _draw_prologue(self, c, prologue_text):
+        # 헤더
+        c.setFillColor(HexColor('#1a1a2e'))
+        c.rect(self.margin_left - 10, self.y - 8, self.content_width + 20, 38, fill=1, stroke=0)
+        c.setFont(self.font_name, 18)
+        c.setFillColor(HexColor('#FFFFFF'))
+        c.drawString(self.margin_left + 6, self.y + 6, '프롤로그')
+        self.y -= 52
+        c.setStrokeColor(HexColor('#6c5ce7'))
+        c.setLineWidth(2)
+        c.line(self.margin_left, self.y, self.margin_left + self.content_width, self.y)
+        self.y -= 20
+        self._mark_drawn()
+        self._draw_paragraph(c, prologue_text, font_size=self.font_size, color='#333333')
+
+    # ──────────────────────────────────────────────
+    # 에필로그
+    # ──────────────────────────────────────────────
+    def _draw_epilogue(self, c, epilogue_text):
+        # 헤더
+        c.setFillColor(HexColor('#0a0a1a'))
+        c.rect(self.margin_left - 10, self.y - 8, self.content_width + 20, 38, fill=1, stroke=0)
+        c.setFont(self.font_name, 18)
+        c.setFillColor(HexColor('#FFFFFF'))
+        c.drawString(self.margin_left + 6, self.y + 6, '에필로그')
+        self.y -= 52
+        c.setStrokeColor(HexColor('#6c5ce7'))
+        c.setLineWidth(2)
+        c.line(self.margin_left, self.y, self.margin_left + self.content_width, self.y)
+        self.y -= 20
+        self._mark_drawn()
+        self._draw_paragraph(c, epilogue_text, font_size=self.font_size, color='#333333')
 
     # ──────────────────────────────────────────────
     # 챕터 시작 페이지 (고급 디자인)
@@ -842,6 +926,9 @@ class EbookDocxGenerator:
         filename = f"{safe_title}.docx"
         filepath = os.path.join(self.output_dir, filename)
 
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
         doc = Document()
         section = doc.sections[0]
         section.page_width = Cm(21.0)
@@ -854,6 +941,25 @@ class EbookDocxGenerator:
         section.right_margin  = Cm(mr)
         section.top_margin    = Cm(mt)
         section.bottom_margin = Cm(mb)
+
+        # 페이지 번호 푸터 추가
+        footer = section.footer
+        fp = footer.paragraphs[0]
+        fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        def _add_page_num_field(para):
+            run = para.add_run('— ')
+            run.font.size = Pt(9); run.font.color.rgb = RGBColor(0xaa,0xaa,0xaa)
+            for tag, text in [('w:fldChar','begin'),('w:instrText','PAGE'),('w:fldChar','end')]:
+                el = OxmlElement(tag)
+                if tag == 'w:instrText':
+                    el.text = text
+                    run2 = para.add_run(); run2._r.append(el)
+                else:
+                    el.set(qn('w:fldCharType'), text)
+                    run2 = para.add_run(); run2._r.append(el)
+            run3 = para.add_run(' —')
+            run3.font.size = Pt(9); run3.font.color.rgb = RGBColor(0xaa,0xaa,0xaa)
+        _add_page_num_field(fp)
 
         fs = self.config.get('pdf_font_size', 11)
         hs = self.config.get('pdf_heading_size', 16)
@@ -886,6 +992,16 @@ class EbookDocxGenerator:
             r2 = p.add_run(f"CH.{ch.get('chapter_num','')}  {ch.get('title','')}")
             r2.font.size = Pt(fs)
         doc.add_page_break()
+
+        # 프롤로그
+        prologue = ebook_data.get('prologue', '')
+        if prologue and prologue.strip():
+            h = doc.add_heading('프롤로그', level=1)
+            for run in h.runs: run.font.size = Pt(20)
+            p = doc.add_paragraph(prologue)
+            p.paragraph_format.line_spacing = ls
+            for run in p.runs: run.font.size = Pt(fs)
+            doc.add_page_break()
 
         # 가치 요약
         analysis = ebook_data.get('analysis', {})
@@ -940,6 +1056,16 @@ class EbookDocxGenerator:
                 p.paragraph_format.line_spacing = ls
                 for run in p.runs: run.font.size = Pt(fs)
 
+            doc.add_page_break()
+
+        # 에필로그
+        epilogue = ebook_data.get('epilogue', '')
+        if epilogue and epilogue.strip():
+            h = doc.add_heading('에필로그', level=1)
+            for run in h.runs: run.font.size = Pt(20)
+            p = doc.add_paragraph(epilogue)
+            p.paragraph_format.line_spacing = ls
+            for run in p.runs: run.font.size = Pt(fs)
             doc.add_page_break()
 
         # 마케팅
@@ -1401,6 +1527,40 @@ class EbookPptxGenerator:
                       size=fs, color='#0a3a1a', wrap=True)
             y += item_h
 
+    def _slide_text_page(self, prs, heading, body_text, bg_hex='#1a1a2e'):
+        """프롤로그/에필로그용 텍스트 슬라이드"""
+        from pptx.enum.text import PP_ALIGN
+        W, H = self.SLIDE_W, self.SLIDE_H
+        slide = self._blank(prs)
+        self._set_bg(slide, bg_hex)
+        # 제목 헤더
+        self._rect(slide, 0, 0, W, self.HEADER_H, '#6c5ce7')
+        self._txt(slide, heading, self.MX, 0.24, W - self.MX * 2, 0.72,
+                  size=26, bold=True, color='#FFFFFF')
+        # 본문 텍스트 (줄임)
+        lines = [l.strip() for l in body_text.split('\n') if l.strip()]
+        preview = ' '.join(lines)[:400] + ('…' if len(' '.join(lines)) > 400 else '')
+        self._txt(slide, preview, self.MX, self.CONTENT_TOP,
+                  W - self.MX * 2, H - self.CONTENT_TOP - 0.3,
+                  size=15, color='#cccccc', wrap=True)
+
+    def _add_slide_number(self, slide, num):
+        """슬라이드 우측 하단에 페이지 번호 추가"""
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        W, H = self.SLIDE_W, self.SLIDE_H
+        txBox = slide.shapes.add_textbox(
+            Inches(W - 0.7), Inches(H - 0.35), Inches(0.55), Inches(0.28)
+        )
+        tf = txBox.text_frame
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = str(num)
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(0xaa, 0xaa, 0xaa)
+
     # ── main ────────────────────────────────────────────────────────────
     def generate(self, ebook_data):
         from pptx import Presentation
@@ -1418,14 +1578,20 @@ class EbookPptxGenerator:
         prs.slide_height = Inches(self.SLIDE_H)
 
         chapters = book_info.get('chapters', [])
+        self._slide_num = 0  # 슬라이드 번호 추적
 
         # 1. 표지
         self._slide_cover(prs, title, subtitle, len(chapters))
 
-        # 2. 목차
+        # 2. 목차 (슬라이드 번호 포함)
         self._slide_toc(prs, chapters)
 
-        # 3. 챕터별 슬라이드
+        # 3. 프롤로그
+        prologue = ebook_data.get('prologue', '')
+        if prologue and prologue.strip():
+            self._slide_text_page(prs, '프롤로그', prologue, '#1a1a2e')
+
+        # 4. 챕터별 슬라이드
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             chapter  = ch_data.get('chapter', {})
             content  = ch_data.get('content', '')
@@ -1434,10 +1600,8 @@ class EbookPptxGenerator:
             col_hex  = PHASE_COLORS.get(phase, '#6c5ce7')
             ch_label = f"CH.{i+1:02d}  {ch_title[:45]}"
 
-            # 챕터 인트로
             self._slide_chapter_intro(prs, chapter, i + 1, col_hex)
 
-            # 섹션별 슬라이드
             for sec in self._parse_sections(content):
                 sec_title = sec['title'] or ch_title
                 sec_lines = [l for l in sec['lines'] if l.strip()]
@@ -1454,6 +1618,17 @@ class EbookPptxGenerator:
                 else:
                     bullets = self._extract_bullets(sec_lines, max_bullets=5, max_chars=95)
                     self._slide_section(prs, sec_title, bullets, ch_label, col_hex)
+
+        # 5. 에필로그
+        epilogue = ebook_data.get('epilogue', '')
+        if epilogue and epilogue.strip():
+            self._slide_text_page(prs, '에필로그', epilogue, '#0a0a1a')
+
+        # 슬라이드 번호 추가 (표지 제외)
+        for idx, slide in enumerate(prs.slides):
+            if idx == 0:
+                continue
+            self._add_slide_number(slide, idx + 1)
 
         prs.save(filepath)
         return filepath, filename

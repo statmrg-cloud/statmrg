@@ -40,6 +40,18 @@
     });
   }
 
+  // === 파일 선택 버튼 ===
+  var filePickBtn = document.getElementById('filePickBtn');
+  var refFilesInput = document.getElementById('refFiles');
+  var fileNamesEl = document.getElementById('fileNames');
+  if (filePickBtn && refFilesInput) {
+    filePickBtn.addEventListener('click', function() { refFilesInput.click(); });
+    refFilesInput.addEventListener('change', function() {
+      var names = Array.from(refFilesInput.files).map(function(f) { return f.name; });
+      fileNamesEl.textContent = names.length ? names.join(', ') : '선택된 파일 없음';
+    });
+  }
+
   // === 메인 페이지: 전자책 생성 폼 ===
   var generateForm = document.getElementById('generateForm');
   if (generateForm) {
@@ -56,18 +68,29 @@
       var outputFormats = Array.from(formatCheckboxes).map(function(cb) { return cb.value; });
       if (outputFormats.length === 0) outputFormats = ['pdf'];
 
+      // FormData로 파일 + 텍스트 데이터 전송
+      var fd = new FormData();
+      fd.append('topic', topic);
+      fd.append('include_images', includeImages ? '1' : '0');
+      fd.append('output_formats', JSON.stringify(outputFormats));
+
+      // 첨부 파일
+      var refFilesEl = document.getElementById('refFiles');
+      if (refFilesEl && refFilesEl.files.length > 0) {
+        Array.from(refFilesEl.files).forEach(function(f) { fd.append('ref_files', f); });
+      }
+
+      // 참고 링크
+      var refLinksEl = document.getElementById('refLinks');
+      if (refLinksEl) fd.append('ref_links', refLinksEl.value.trim());
+
       var overlay = document.getElementById('progressOverlay');
       if (overlay) overlay.style.display = 'flex';
 
       try {
         var res = await fetch('/api/generate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            topic: topic,
-            include_images: includeImages,
-            output_formats: outputFormats,
-          }),
+          body: fd,
         });
         var data = await res.json();
 

@@ -271,3 +271,15 @@ footer { background: #1a1a2e; color: #666; padding: 15px 0; text-align: center; 
   .format-options { gap: 8px; }
   .chapter-tabs { gap: 4px; }
 }
+
+
+/* 참고 파일 업로드 영역 */
+.file-upload-area {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px dashed #c0b8f0;
+  border-radius: 8px;
+  background: #faf9ff;
+}
+.file-upload-area:hover { border-color: #6c5ce7; background: #f3f0ff; }

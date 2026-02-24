@@ -674,6 +674,17 @@ class EbookHwpxGenerator:
                 paras.append(self._h2('왜 이 책에 투자해야 하는가'))
                 paras.append(self._body(analysis['why_pay']))
 
+        # 프롤로그
+        prologue = ebook_data.get('prologue', '')
+        if prologue and prologue.strip():
+            paras.append(self._h1('프롤로그', page_break=True))
+            for line in prologue.split('\n'):
+                stripped = line.strip()
+                if stripped:
+                    paras.append(self._body(stripped))
+                else:
+                    paras.append(self._empty())
+
         # 챕터 본문
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             chapter = ch_data.get('chapter', {})
@@ -717,6 +728,17 @@ class EbookHwpxGenerator:
                     paras.append(self._bullet(f"{m2.group(1)}. {m2.group(2)}"))
                     continue
                 paras.append(self._body(stripped))
+
+        # 에필로그
+        epilogue = ebook_data.get('epilogue', '')
+        if epilogue and epilogue.strip():
+            paras.append(self._h1('에필로그', page_break=True))
+            for line in epilogue.split('\n'):
+                stripped = line.strip()
+                if stripped:
+                    paras.append(self._body(stripped))
+                else:
+                    paras.append(self._empty())
 
         # 마케팅 부록
         marketing = ebook_data.get('marketing', {})

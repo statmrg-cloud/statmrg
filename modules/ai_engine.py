@@ -401,6 +401,58 @@ content_topics는 정확히 5개를 만드세요."""
 
 
 # ============================================================
+# 프롤로그 생성
+# ============================================================
+def step_prologue(client, model, topic, book_info, reference_text='', config=None):
+    """프롤로그: 책의 전반적인 요약과 독자에게 보내는 시작 메시지"""
+    ref_section = f'\n\n[참고 자료 요약]\n{reference_text[:3000]}' if reference_text else ''
+    system = '당신은 베스트셀러 작가입니다. 독자의 마음을 사로잡는 진정성 있는 프롤로그를 씁니다.'
+    chapters_summary = ', '.join(
+        f"챕터{ch.get('chapter_num',i+1)}: {ch.get('title','')}"
+        for i, ch in enumerate(book_info.get('chapters', [])[:6])
+    )
+    user = f"""전자책: "{book_info.get('book_title', topic)}"
+부제목: "{book_info.get('subtitle', '')}"
+주요 챕터: {chapters_summary}
+{ref_section}
+
+위 정보를 바탕으로 프롤로그를 작성하세요:
+1. 독자의 현재 고민·상황에 깊이 공감하는 도입 (200~300자)
+2. 이 책이 독자에게 줄 변화와 실질적 가치 (300~400자)
+3. 책의 구성과 읽는 방법 안내 (200~300자)
+4. 저자가 독자에게 보내는 격려 메시지 (100~200자)
+
+총 800~1200자. 따뜻하고 진정성 있는 1인칭 어조로 작성하세요."""
+    return call_gpt(client, model, system, user, temperature=0.7, max_tokens=2000)
+
+
+# ============================================================
+# 에필로그 생성
+# ============================================================
+def step_epilogue(client, model, topic, book_info, chapters_content, reference_text='', config=None):
+    """에필로그: 결론 및 독자에게 보내는 마지막 메시지"""
+    ref_section = f'\n\n[참고 자료 요약]\n{reference_text[:2000]}' if reference_text else ''
+    chapter_titles = [
+        f"챕터{ch['chapter'].get('chapter_num', i+1)}: {ch['chapter'].get('title', '')}"
+        for i, ch in enumerate(chapters_content[:8])
+    ]
+    system = '당신은 베스트셀러 작가입니다. 독자에게 행동을 촉구하는 따뜻하고 강렬한 에필로그를 씁니다.'
+    user = f"""전자책: "{book_info.get('book_title', topic)}"
+다룬 챕터들: {json.dumps(chapter_titles, ensure_ascii=False)}
+{ref_section}
+
+에필로그를 다음 구성으로 작성하세요:
+1. 끝까지 읽어온 독자에게 감사와 인정의 메시지 (100~200자)
+2. 이 책에서 배운 핵심 내용의 전체 요약 (400~600자)
+3. 지금 당장 실행해야 할 첫 번째 행동 1가지 (200~300자)
+4. 앞으로의 여정에 대한 격려와 비전 제시 (200~300자)
+5. 마지막 인사말 (100자 내외)
+
+총 1000~1400자. 독자의 행동을 이끌어내는 진정성 있는 어조로 작성하세요."""
+    return call_gpt(client, model, system, user, temperature=0.7, max_tokens=2500)
+
+
+# ============================================================
 # 5단계: 책 표지 이미지 생성 (이미지는 선택사항, 실패해도 계속 진행)
 # ============================================================
 def step5_generate_cover(client_unused, book_title, subtitle):
@@ -517,16 +569,24 @@ def generate_chapter_image(client_unused, chapter_title, chapter_purpose):
 # ============================================================
 # 전체 파이프라인 실행
 # ============================================================
-def generate_ebook(model, topic, include_images=True, progress_callback=None, api_key=None, config=None):
+def generate_ebook(model, topic, include_images=True, progress_callback=None, api_key=None,
+                   config=None, reference_materials=None):
     """
     전자책 생성 전체 파이프라인
     ChatGPT OAuth 토큰 기반 - chatgpt.com/backend-api/codex/responses (SSE stream)
+    reference_materials: {'text': str} — 첨부 파일·링크에서 추출한 참고 텍스트
     """
     client = None
+    ref_text = ''
+    if reference_materials and isinstance(reference_materials, dict):
+        ref_text = reference_materials.get('text', '')[:8000]
+
     result = {
         'topic': topic,
         'analysis': None,
         'book_info': None,
+        'prologue': '',
+        'epilogue': '',
         'chapters_content': [],
         'marketing': None,
         'cover_url': None,
@@ -534,7 +594,7 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
         'error': None,
     }
 
-    total_steps = 6
+    total_steps = 8  # 기본값 (프롤로그·에필로그 포함)
     current_step = 0
 
     def progress(msg, data=None):
@@ -545,32 +605,54 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
 
     cfg = config or {}
 
+    # 참고 자료 안내를 topic에 포함
+    full_topic = topic
+    if ref_text:
+        full_topic = f'{topic}\n\n[참고 자료 있음: 아래 내용을 적극 활용하여 더 구체적이고 실용적인 내용을 작성하세요]\n{ref_text[:2000]}'
+
     try:
         # 1단계: 유료 가치 판단
         progress('주제 분석 및 유료 가치 판단 중...')
-        result['analysis'] = step1_value_analysis(client, model, topic, cfg)
+        result['analysis'] = step1_value_analysis(client, model, full_topic, cfg)
 
         # 2단계: 목차 설계
         progress('구매자 관점 목차 설계 중...')
-        result['book_info'] = step2_toc_design(client, model, topic, result['analysis'], cfg)
+        result['book_info'] = step2_toc_design(client, model, full_topic, result['analysis'], cfg)
 
         chapters = result['book_info'].get('chapters', [])
-        total_steps = 4 + len(chapters) + (len(chapters) if include_images else 0)
+        total_steps = 6 + len(chapters) + (len(chapters) if include_images else 0)
 
-        # 3단계: 챕터별 본문 작성
+        # 3단계: 프롤로그 생성
+        progress('프롤로그 작성 중...')
+        try:
+            result['prologue'] = step_prologue(client, model, topic, result['book_info'], ref_text, cfg)
+        except Exception as e:
+            print(f'[프롤로그] 생성 실패: {e}')
+            result['prologue'] = ''
+
+        # 4단계: 챕터별 본문 작성
         for i, chapter in enumerate(chapters):
             progress(f"챕터 {i+1}/{len(chapters)} 집필 중: {chapter.get('title', '')[:30]}...")
-            content = step3_write_chapter(client, model, topic, result['book_info'], chapter, i, len(chapters), cfg)
-            result['chapters_content'].append({
-                'chapter': chapter,
-                'content': content,
-            })
+            content = step3_write_chapter(
+                client, model, full_topic, result['book_info'], chapter, i, len(chapters), cfg
+            )
+            result['chapters_content'].append({'chapter': chapter, 'content': content})
 
-        # 4단계: 마케팅 분석
+        # 5단계: 에필로그 생성
+        progress('에필로그 작성 중...')
+        try:
+            result['epilogue'] = step_epilogue(
+                client, model, topic, result['book_info'], result['chapters_content'], ref_text, cfg
+            )
+        except Exception as e:
+            print(f'[에필로그] 생성 실패: {e}')
+            result['epilogue'] = ''
+
+        # 6단계: 마케팅 분석
         progress('자연 유통 분석 및 판매 소개문 작성 중...')
         result['marketing'] = step4_marketing(client, model, topic, result['analysis'], result['book_info'], cfg)
 
-        # 5단계: 표지 이미지
+        # 7단계: 표지 이미지
         if include_images:
             progress('전자책 표지 이미지 생성 중...')
             result['cover_url'] = step5_generate_cover(
@@ -579,7 +661,7 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
                 result['book_info'].get('subtitle', ''),
             )
 
-            # 6단계: 챕터 이미지
+            # 8단계: 챕터 이미지
             for i, ch_data in enumerate(result['chapters_content']):
                 chapter = ch_data['chapter']
                 progress(f"챕터 {i+1} 이미지 생성 중...")

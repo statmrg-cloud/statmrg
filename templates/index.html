@@ -44,6 +44,27 @@
       <textarea id="topicInput" rows="4" placeholder="예시:&#10;- 직장인 퇴근 후 월 100만원 부수입 만드는 방법&#10;- 초보자를 위한 주식 투자 가이드&#10;- 1인 사업자 세금 절약 실전 노하우"></textarea>
     </div>
 
+    <!-- 참고 파일 첨부 -->
+    <div class="form-group">
+      <label for="refFiles">참고 파일 첨부 <small style="font-weight:normal;color:#888;">(선택 · .txt .pdf .docx .md)</small></label>
+      <div class="file-upload-area" id="fileUploadArea">
+        <input type="file" id="refFiles" name="ref_files" multiple
+               accept=".txt,.pdf,.docx,.md"
+               style="display:none;" />
+        <button type="button" class="btn btn-sm" id="filePickBtn">파일 선택</button>
+        <span id="fileNames" style="margin-left:10px;color:#666;font-size:13px;">선택된 파일 없음</span>
+      </div>
+      <small class="option-note">AI가 첨부 파일 내용을 참고하여 더 관련성 높은 책을 작성합니다</small>
+    </div>
+
+    <!-- 참고 링크 -->
+    <div class="form-group">
+      <label for="refLinks">참고 링크 <small style="font-weight:normal;color:#888;">(선택 · 한 줄에 URL 하나)</small></label>
+      <textarea id="refLinks" name="ref_links" rows="3"
+                placeholder="https://example.com/article&#10;https://blog.example.com/post"></textarea>
+      <small class="option-note">입력한 URL의 내용을 AI가 참고하여 책을 작성합니다</small>
+    </div>
+
     <!-- 출력 형식 선택 -->
     <div class="form-group">
       <label>출력 형식 선택 (복수 선택 가능)</label>
