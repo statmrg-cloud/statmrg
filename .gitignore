@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 static/output/*
 token_data.json
+user_config.json
 dist/
 build/
 *.zip

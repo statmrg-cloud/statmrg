@@ -3,7 +3,13 @@ import sys
 import json
 import platform
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_config.json')
+# frozen(EXE) 모드에서는 실행파일 디렉토리에 설정 저장 (영구 보존)
+# 개발 모드에서는 소스 디렉토리에 저장
+if getattr(sys, 'frozen', False):
+    _CONFIG_DIR = os.path.dirname(sys.executable)
+else:
+    _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(_CONFIG_DIR, 'user_config.json')
 
 _DEFAULT_PROMPT_CHAPTER_SYSTEM = """당신은 전자책 집필 전문가입니다. 사람이 실제로 돈을 내고 살 가치가 있는 상품 수준의 글을 작성합니다.
 
