@@ -46,15 +46,30 @@
 
     <!-- 참고 파일 첨부 -->
     <div class="form-group">
-      <label for="refFiles">참고 파일 첨부 <small style="font-weight:normal;color:#888;">(선택 · .txt .pdf .docx .md)</small></label>
+      <label for="refFiles">참고 파일 첨부 <small style="font-weight:normal;color:#888;">(선택 · 최대 5개)</small></label>
       <div class="file-upload-area" id="fileUploadArea">
         <input type="file" id="refFiles" name="ref_files" multiple
-               accept=".txt,.pdf,.docx,.md"
+               accept=".txt,.pdf,.docx,.md,.csv,.json,.hwp,.rtf,.xml,.html,.htm,.log,.ini,.yaml,.yml"
                style="display:none;" />
         <button type="button" class="btn btn-sm" id="filePickBtn">파일 선택</button>
         <span id="fileNames" style="margin-left:10px;color:#666;font-size:13px;">선택된 파일 없음</span>
       </div>
-      <small class="option-note">AI가 첨부 파일 내용을 참고하여 더 관련성 높은 책을 작성합니다</small>
+      <div style="margin-top:6px;">
+        <span style="font-size:11px;color:#999;line-height:1.6;">
+          지원 형식: <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.txt</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.pdf</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.docx</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.md</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.csv</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.json</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.html</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.xml</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.yaml</code>
+          <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px;">.log</code>
+          등 텍스트 기반 파일
+        </span>
+      </div>
+      <small class="option-note">AI가 첨부된 모든 파일 내용을 꼼꼼히 읽고 빠뜨리지 않고 반영합니다</small>
     </div>
 
     <!-- 참고 링크 -->

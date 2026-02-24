@@ -204,13 +204,15 @@ def start_generation():
         except Exception:
             output_formats = ['pdf']
 
-        # 참고 파일 추출
+        # 참고 파일 추출 (최대 5개)
+        MAX_REF_FILES = 5
         ref_texts = []
-        for f in request.files.getlist('ref_files'):
+        uploaded = request.files.getlist('ref_files')
+        for f in uploaded[:MAX_REF_FILES]:
             if f and f.filename:
                 text = _extract_file_text(f)
                 if text.strip():
-                    ref_texts.append(f'[파일: {f.filename}]\n{text[:5000]}')
+                    ref_texts.append(f'[파일: {f.filename}]\n{text[:15000]}')
 
         # 참고 링크 추출
         ref_links_raw = request.form.get('ref_links', '').strip()
@@ -220,7 +222,7 @@ def start_generation():
                 if url.startswith('http'):
                     text = _fetch_url_text(url)
                     if text.strip():
-                        ref_texts.append(f'[URL: {url}]\n{text[:5000]}')
+                        ref_texts.append(f'[URL: {url}]\n{text[:8000]}')
 
         reference_materials = {'text': '\n\n'.join(ref_texts)} if ref_texts else None
     else:

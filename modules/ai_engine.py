@@ -279,7 +279,7 @@ def step2_toc_design(client, model, topic, analysis, config=None):
 # ============================================================
 # 3단계: 챕터별 본문 작성
 # ============================================================
-def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, total_chapters, config=None):
+def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, total_chapters, config=None, reference_text=''):
     """챕터를 2회 호출(전반부/후반부)로 나눠 풍부한 분량 확보"""
     cfg = config or {}
     sections = chapter.get('sections', [])
@@ -312,6 +312,16 @@ def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, t
 - 독자가 "이건 내 이야기다"라고 느낄 수 있게 공감 포인트 배치
 - 핵심 개념은 반복적으로 다른 표현으로 강조"""
 
+    # 참고 자료를 챕터별로 할당 (긴 참고 자료를 챕터 수로 나눠 균등 배분)
+    ref_section = ''
+    if reference_text:
+        # 챕터 인덱스에 따라 참고 자료의 다른 부분을 할당하여 전체 내용 빠뜨리지 않기
+        chunk_size = max(4000, len(reference_text) // max(total_chapters, 1))
+        start = chapter_idx * chunk_size
+        end = start + chunk_size + 2000  # 약간 겹치게
+        chapter_ref = reference_text[start:end] if start < len(reference_text) else reference_text[-3000:]
+        ref_section = f'\n\n[참고 자료 — 이 챕터 작성 시 아래 내용을 빠뜨리지 말고 적극 반영하세요]\n{chapter_ref}'
+
     # 1차: 도입부 + 전반부 소제목
     user1 = f"""전자책: "{book_info.get('book_title', topic)}"
 현재 챕터: {chapter_idx + 1}/{total_chapters}
@@ -322,6 +332,7 @@ def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, t
 - 목적: {chapter.get('purpose', '')}
 - 읽기 전: {chapter.get('before_state', '')}
 - 읽고 후: {chapter.get('after_state', '')}
+{ref_section}
 
 지금 작성할 소제목들 (전반부): {json.dumps(sections_first, ensure_ascii=False)}
 
@@ -331,8 +342,9 @@ def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, t
 3. 소제목마다 최소 1500~2500자 분량으로 깊이있게 작성
 4. 각 소제목 안에 실제 사례, 구체적 숫자, 비교 예시를 반드시 포함
 5. 각 소제목마다 [핵심 포인트] 또는 [실전 팁] 박스를 1개 이상 넣으세요
-6. 반드시 한국어로 작성
-7. 최소 {min_chars_per_half}자 이상 작성"""
+6. 위 참고 자료가 있다면 해당 내용의 핵심 정보·사례·수치를 반드시 본문에 녹여내세요
+7. 반드시 한국어로 작성
+8. 최소 {min_chars_per_half}자 이상 작성"""
 
     part1 = call_gpt(client, model, system, user1, temperature=0.7, max_tokens=8000)
 
@@ -342,6 +354,7 @@ def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, t
 챕터 제목: {chapter.get('title', '')}
 
 앞서 작성된 전반부 내용에 이어서 후반부를 작성합니다.
+{ref_section}
 
 지금 작성할 소제목들 (후반부): {json.dumps(sections_second, ensure_ascii=False)}
 
@@ -350,14 +363,15 @@ def step3_write_chapter(client, model, topic, book_info, chapter, chapter_idx, t
 2. 소제목마다 최소 1500~2500자 분량으로 깊이있게 작성
 3. 각 소제목 안에 실제 사례, 구체적 숫자, 비교 예시를 반드시 포함
 4. 각 소제목마다 [핵심 포인트] 또는 [실전 팁] 박스를 1개 이상 넣으세요
-5. 마지막에 다음을 추가하세요:
+5. 위 참고 자료가 있다면 해당 내용의 핵심 정보·사례·수치를 반드시 본문에 녹여내세요
+6. 마지막에 다음을 추가하세요:
    === 핵심 요약 ===
    이 챕터에서 배운 5가지 핵심 내용을 정리 (각 2~3문장)
 
    === 실행 체크리스트 ===
    독자가 바로 실행할 수 있는 5~7가지 구체적 행동 목록
-6. 반드시 한국어로 작성
-7. 최소 {min_chars_per_half}자 이상 작성"""
+7. 반드시 한국어로 작성
+8. 최소 {min_chars_per_half}자 이상 작성"""
 
     part2 = call_gpt(client, model, system, user2, temperature=0.7, max_tokens=8000)
 
@@ -405,7 +419,7 @@ content_topics는 정확히 5개를 만드세요."""
 # ============================================================
 def step_prologue(client, model, topic, book_info, reference_text='', config=None):
     """프롤로그: 책의 전반적인 요약과 독자에게 보내는 시작 메시지"""
-    ref_section = f'\n\n[참고 자료 요약]\n{reference_text[:3000]}' if reference_text else ''
+    ref_section = f'\n\n[참고 자료 — 아래 내용을 프롤로그에 반영하세요]\n{reference_text[:6000]}' if reference_text else ''
     system = '당신은 베스트셀러 작가입니다. 독자의 마음을 사로잡는 진정성 있는 프롤로그를 씁니다.'
     chapters_summary = ', '.join(
         f"챕터{ch.get('chapter_num',i+1)}: {ch.get('title','')}"
@@ -431,7 +445,7 @@ def step_prologue(client, model, topic, book_info, reference_text='', config=Non
 # ============================================================
 def step_epilogue(client, model, topic, book_info, chapters_content, reference_text='', config=None):
     """에필로그: 결론 및 독자에게 보내는 마지막 메시지"""
-    ref_section = f'\n\n[참고 자료 요약]\n{reference_text[:2000]}' if reference_text else ''
+    ref_section = f'\n\n[참고 자료 — 에필로그 작성에 반영하세요]\n{reference_text[:4000]}' if reference_text else ''
     chapter_titles = [
         f"챕터{ch['chapter'].get('chapter_num', i+1)}: {ch['chapter'].get('title', '')}"
         for i, ch in enumerate(chapters_content[:8])
@@ -579,7 +593,7 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
     client = None
     ref_text = ''
     if reference_materials and isinstance(reference_materials, dict):
-        ref_text = reference_materials.get('text', '')[:8000]
+        ref_text = reference_materials.get('text', '')[:60000]  # 최대 60K자 보존 (5개 파일 대응)
 
     result = {
         'topic': topic,
@@ -605,10 +619,10 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
 
     cfg = config or {}
 
-    # 참고 자료 안내를 topic에 포함
+    # 참고 자료 안내를 topic에 포함 (가치 분석·목차 설계에 사용)
     full_topic = topic
     if ref_text:
-        full_topic = f'{topic}\n\n[참고 자료 있음: 아래 내용을 적극 활용하여 더 구체적이고 실용적인 내용을 작성하세요]\n{ref_text[:2000]}'
+        full_topic = f'{topic}\n\n[참고 자료 있음: 아래 모든 참고 자료를 꼼꼼히 읽고 핵심 내용을 빠뜨리지 말고 적극 반영하세요]\n{ref_text[:6000]}'
 
     try:
         # 1단계: 유료 가치 판단
@@ -630,11 +644,12 @@ def generate_ebook(model, topic, include_images=True, progress_callback=None, ap
             print(f'[프롤로그] 생성 실패: {e}')
             result['prologue'] = ''
 
-        # 4단계: 챕터별 본문 작성
+        # 4단계: 챕터별 본문 작성 (참고 자료를 각 챕터에 전달)
         for i, chapter in enumerate(chapters):
             progress(f"챕터 {i+1}/{len(chapters)} 집필 중: {chapter.get('title', '')[:30]}...")
             content = step3_write_chapter(
-                client, model, full_topic, result['book_info'], chapter, i, len(chapters), cfg
+                client, model, full_topic, result['book_info'], chapter, i, len(chapters), cfg,
+                reference_text=ref_text,
             )
             result['chapters_content'].append({'chapter': chapter, 'content': content})
 

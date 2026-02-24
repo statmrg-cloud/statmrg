@@ -40,15 +40,24 @@
     });
   }
 
-  // === 파일 선택 버튼 ===
+  // === 파일 선택 버튼 (최대 5개 제한) ===
+  var MAX_REF_FILES = 5;
   var filePickBtn = document.getElementById('filePickBtn');
   var refFilesInput = document.getElementById('refFiles');
   var fileNamesEl = document.getElementById('fileNames');
   if (filePickBtn && refFilesInput) {
     filePickBtn.addEventListener('click', function() { refFilesInput.click(); });
     refFilesInput.addEventListener('change', function() {
+      if (refFilesInput.files.length > MAX_REF_FILES) {
+        alert('참고 파일은 최대 ' + MAX_REF_FILES + '개까지 첨부할 수 있습니다.\n현재 ' + refFilesInput.files.length + '개 선택됨 — 다시 선택해주세요.');
+        refFilesInput.value = '';
+        fileNamesEl.textContent = '선택된 파일 없음';
+        return;
+      }
       var names = Array.from(refFilesInput.files).map(function(f) { return f.name; });
-      fileNamesEl.textContent = names.length ? names.join(', ') : '선택된 파일 없음';
+      fileNamesEl.textContent = names.length
+        ? names.join(', ') + ' (' + names.length + '/' + MAX_REF_FILES + '개)'
+        : '선택된 파일 없음';
     });
   }
 
