@@ -1,5 +1,7 @@
 import os
+import sys
 import json
+import platform
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_config.json')
 
@@ -28,10 +30,16 @@ _DEFAULT_PROMPT_VALUE_SYSTEM = """당신은 전자책 시장 분석 전문가입
 
 _DEFAULT_PROMPT_MARKETING_SYSTEM = """당신은 전자책 마케팅 전략 전문가입니다. 반드시 JSON 형식으로만 응답하세요."""
 
+# OS별 기본 한국어 폰트 자동 선택
+def _default_font():
+    if platform.system() == 'Windows':
+        return 'MalgunGothic'
+    return 'AppleGothic'
+
 DEFAULT_CONFIG = {
     'model': 'gpt-5-codex',
     'image_model': 'gpt-4o',
-    'pdf_font': 'AppleGothic',
+    'pdf_font': _default_font(),
     'pdf_font_size': 11,
     'pdf_heading_size': 16,
     'pdf_subheading_size': 13,

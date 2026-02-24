@@ -12,6 +12,7 @@ PDF, DOCX, PPTX 지원
 """
 import os
 import re
+import sys
 import math
 import requests
 from PIL import Image as PILImage
@@ -28,34 +29,91 @@ from config import FONT_PATHS, load_config
 # 유틸리티
 # ============================================================
 def find_font_path(font_name):
+    """폰트 파일 경로 검색 (macOS / Windows 크로스 플랫폼)"""
+    # 1) 명시적 FONT_PATHS 매핑
     if font_name in FONT_PATHS:
         path = FONT_PATHS[font_name]
         if os.path.exists(path):
             return path
+
+    # 2) 시스템 폰트 디렉토리 검색
     search_dirs = [
+        # macOS
         '/System/Library/Fonts/Supplemental/',
         '/System/Library/Fonts/',
         '/Library/Fonts/',
         os.path.expanduser('~/Library/Fonts/'),
+        # Windows
         'C:/Windows/Fonts/',
+        os.path.expanduser('~/AppData/Local/Microsoft/Windows/Fonts/'),
     ]
     for d in search_dirs:
         if os.path.isdir(d):
             for f in os.listdir(d):
                 if font_name.lower() in f.lower() and f.endswith(('.ttf', '.ttc', '.otf')):
                     return os.path.join(d, f)
+
+    # 3) PyInstaller 번들 내 폰트 검색
+    if getattr(sys, 'frozen', False):
+        bundle_dir = sys._MEIPASS
+    else:
+        bundle_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for fname in os.listdir(bundle_dir) if os.path.isdir(bundle_dir) else []:
+        if font_name.lower() in fname.lower() and fname.endswith(('.ttf', '.ttc', '.otf')):
+            return os.path.join(bundle_dir, fname)
+
     return None
 
 
+# Windows 시스템 한국어 폰트 우선순위 (항상 존재)
+_WIN_FALLBACK_FONTS = [
+    ('MalgunGothic', 'C:/Windows/Fonts/malgun.ttf'),
+    ('Batang',       'C:/Windows/Fonts/batang.ttc'),
+    ('Gulim',        'C:/Windows/Fonts/gulim.ttc'),
+    ('Dotum',        'C:/Windows/Fonts/dotum.ttc'),
+]
+# macOS 한국어 폰트 우선순위
+_MAC_FALLBACK_FONTS = [
+    ('AppleGothic',   '/System/Library/Fonts/Supplemental/AppleGothic.ttf'),
+    ('AppleMyungjo',  '/System/Library/Fonts/Supplemental/AppleMyungjo.ttf'),
+    ('Helvetica',     None),  # PDF 내장 폰트 (영문 fallback)
+]
+
+def _register_fallback_font():
+    """시스템 기본 한국어 폰트 자동 등록 및 이름 반환"""
+    import platform
+    candidates = _WIN_FALLBACK_FONTS if platform.system() == 'Windows' else _MAC_FALLBACK_FONTS
+    for name, path in candidates:
+        if path is None:
+            return name  # 내장 폰트
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+            except Exception:
+                try:
+                    pdfmetrics.registerFont(TTFont(name, path, subfontIndex=0))
+                except Exception:
+                    continue
+            return name
+    return 'Helvetica'  # 최후 fallback (영문만 지원)
+
+
 def register_font(font_name):
+    """폰트 등록 — 지정 폰트 없으면 시스템 fallback 자동 사용"""
     path = find_font_path(font_name)
-    if not path:
-        raise FileNotFoundError(f"폰트를 찾을 수 없습니다: {font_name}")
-    try:
-        pdfmetrics.registerFont(TTFont(font_name, path))
-    except Exception:
-        pdfmetrics.registerFont(TTFont(font_name, path, subfontIndex=0))
-    return font_name
+    if path:
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, path))
+            return font_name
+        except Exception:
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, path, subfontIndex=0))
+                return font_name
+            except Exception:
+                pass
+    # 지정 폰트 없음 → 시스템 기본 폰트로 fallback
+    fallback = _register_fallback_font()
+    return fallback
 
 
 def download_image(url, output_dir):
