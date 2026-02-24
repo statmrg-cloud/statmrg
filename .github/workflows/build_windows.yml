@@ -29,19 +29,24 @@ jobs:
 
       - name: 빌드 결과 확인
         run: |
-          if (Test-Path "dist\전자책생성기\전자책생성기.exe") {
+          if (Test-Path "dist\전자책생성기.exe") {
             Write-Host "빌드 성공!"
+            Get-Item "dist\전자책생성기.exe" | Select-Object Name, Length
           } else {
-            Write-Host "빌드 실패"
+            Write-Host "빌드 실패 - dist 폴더 내용:"
+            Get-ChildItem dist\ -Recurse | Select-Object FullName
             exit 1
           }
 
-      - name: Windows 설치 가이드 복사
-        run: Copy-Item WINDOWS_README.md dist\전자책생성기\README.txt
+      - name: 배포 폴더 준비
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\package
+          Copy-Item dist\전자책생성기.exe dist\package\전자책생성기.exe
+          Copy-Item WINDOWS_README.md dist\package\README.txt
 
       - name: ZIP 압축
         run: |
-          Compress-Archive -Path dist\전자책생성기\* -DestinationPath ebook-creator-windows-exe.zip
+          Compress-Archive -Path dist\package\* -DestinationPath ebook-creator-windows-exe.zip
 
       - name: 아티팩트 업로드 (다운로드 가능)
         uses: actions/upload-artifact@v4
