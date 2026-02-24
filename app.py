@@ -4,6 +4,7 @@ ChatGPT OAuth PKCE 인증 기반
 다중 출력 형식: PDF, DOCX, PPTX
 """
 import os
+import sys
 import json
 import threading
 import uuid
@@ -18,9 +19,12 @@ from modules.oauth import (
     start_oauth_flow, get_login_status, get_valid_access_token, clear_tokens
 )
 
+# PyInstaller 번들 환경에서 템플릿/정적 파일 경로 명시
+_BASE = sys._MEIPASS if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+
 app = Flask(__name__,
-            static_folder='static',
-            template_folder='templates')
+            static_folder=os.path.join(_BASE, 'static'),
+            template_folder=os.path.join(_BASE, 'templates'))
 CORS(app)
 
 # 진행 상태 저장소
