@@ -982,15 +982,62 @@ class EbookDocxGenerator:
             r2.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
         doc.add_page_break()
 
-        # 목차
+        # 목차 (페이지 번호 포함 — PAGEREF 필드 사용)
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
+
+        def _add_pageref_field(paragraph, bookmark_name):
+            """PAGEREF 필드를 단락에 추가 (Word에서 자동으로 페이지 번호로 치환)"""
+            run_dots = paragraph.add_run('  ')
+            run_dots.font.size = Pt(fs)
+            run_dots.font.color.rgb = RGBColor(0xcc,0xcc,0xcc)
+            # Tab + dotted leader 대신 PAGEREF 필드 코드 삽입
+            fld_begin = OxmlElement('w:fldChar')
+            fld_begin.set(qn('w:fldCharType'), 'begin')
+            r1 = paragraph.add_run()
+            r1._r.append(fld_begin)
+            instr = OxmlElement('w:instrText')
+            instr.set(qn('xml:space'), 'preserve')
+            instr.text = f' PAGEREF {bookmark_name} \\h '
+            r2 = paragraph.add_run()
+            r2._r.append(instr)
+            fld_sep = OxmlElement('w:fldChar')
+            fld_sep.set(qn('w:fldCharType'), 'separate')
+            r3 = paragraph.add_run()
+            r3._r.append(fld_sep)
+            r_num = paragraph.add_run('?')
+            r_num.font.size = Pt(fs)
+            r_num.font.color.rgb = RGBColor(0x55,0x55,0x55)
+            fld_end = OxmlElement('w:fldChar')
+            fld_end.set(qn('w:fldCharType'), 'end')
+            r4 = paragraph.add_run()
+            r4._r.append(fld_end)
+
+        # 목차 항목에 탭 + 페이지 번호 필드 추가
         for ch in book_info.get('chapters', []):
+            ch_num = ch.get('chapter_num', '')
+            bm_name = f'_ch{ch_num}'
             p = doc.add_paragraph()
+            # 탭 스톱 설정 (우측 정렬, 점선 리더)
+            pPr = p._p.get_or_add_pPr()
+            tabs_el = OxmlElement('w:tabs')
+            tab_el = OxmlElement('w:tab')
+            tab_el.set(qn('w:val'), 'right')
+            tab_el.set(qn('w:leader'), 'dot')
+            # A4 폭(21cm) - 좌우여백으로 탭 위치 계산 (twips: 1cm = 567 twips)
+            tab_pos = int((21.0 - ml - mr) * 567)
+            tab_el.set(qn('w:pos'), str(tab_pos))
+            tabs_el.append(tab_el)
+            pPr.append(tabs_el)
+
             r1 = p.add_run(f"[{ch.get('phase','')}]  ")
             r1.font.size = Pt(9); r1.font.color.rgb = RGBColor(0x88,0x88,0x88)
-            r2 = p.add_run(f"CH.{ch.get('chapter_num','')}  {ch.get('title','')}")
+            r2 = p.add_run(f"CH.{ch_num}  {ch.get('title','')}")
             r2.font.size = Pt(fs)
+            # 탭 문자 삽입 + PAGEREF 필드
+            r_tab = p.add_run('\t')
+            r_tab.font.size = Pt(fs)
+            _add_pageref_field(p, bm_name)
         doc.add_page_break()
 
         # 프롤로그
@@ -1020,15 +1067,27 @@ class EbookDocxGenerator:
                 for run in p.runs: run.font.size = Pt(fs)
             doc.add_page_break()
 
-        # 챕터
+        # 챕터 (각 챕터에 북마크 삽입 — 목차 PAGEREF 연동)
+        def _add_bookmark(paragraph, bm_name, bm_id):
+            """단락에 북마크(bookmarkStart + bookmarkEnd)를 추가"""
+            bm_start = OxmlElement('w:bookmarkStart')
+            bm_start.set(qn('w:id'), str(bm_id))
+            bm_start.set(qn('w:name'), bm_name)
+            paragraph._p.insert(0, bm_start)
+            bm_end = OxmlElement('w:bookmarkEnd')
+            bm_end.set(qn('w:id'), str(bm_id))
+            paragraph._p.append(bm_end)
+
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             chapter = ch_data.get('chapter', {})
             content = ch_data.get('content', '')
 
             h = doc.add_heading(f"CHAPTER {i+1}", level=2)
             for run in h.runs: run.font.size = Pt(12); run.font.color.rgb = RGBColor(0xaa,0xaa,0xaa)
+            # 챕터 제목에 북마크 추가 (목차 페이지 번호 연동)
             h2 = doc.add_heading(chapter.get('title',''), level=1)
             for run in h2.runs: run.font.size = Pt(hs)
+            _add_bookmark(h2, f'_ch{i+1}', i + 100)
 
             before = chapter.get('before_state','')
             after  = chapter.get('after_state','')

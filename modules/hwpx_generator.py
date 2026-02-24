@@ -446,6 +446,40 @@ class EbookHwpxGenerator:
         """
         hdr = _mm_to_hwp(15)
         ftr = _mm_to_hwp(15)
+
+        # 바닥글(footer) 영역: 페이지 번호 표시
+        # OWPML fieldType 5 = PAGE_NUM (현재 페이지 번호)
+        footer_pid = self._new_pid()
+        footer_para = (
+            f'        <hp:subList id="0" textDirection="HORIZONTAL" lineWrap="BREAK"'
+            f' vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0"'
+            f' textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">\n'
+            f'          <hp:p id="{footer_pid}" paraPrIDRef="0" styleIDRef="0"'
+            f' pageBreak="0" columnBreak="0" merged="0">\n'
+            f'            <hp:run charPrIDRef="0">\n'
+            f'              <hp:t>— </hp:t>\n'
+            f'            </hp:run>\n'
+            f'            <hp:run charPrIDRef="0">\n'
+            f'              <hp:ctrl>\n'
+            f'                <hp:fieldBegin type="PAGE" name="쪽 번호" instId="1"'
+            f' fieldid="0" command="PAGE \\* Arabic"/>\n'
+            f'              </hp:ctrl>\n'
+            f'            </hp:run>\n'
+            f'            <hp:run charPrIDRef="0">\n'
+            f'              <hp:t>1</hp:t>\n'
+            f'            </hp:run>\n'
+            f'            <hp:run charPrIDRef="0">\n'
+            f'              <hp:ctrl>\n'
+            f'                <hp:fieldEnd type="PAGE"/>\n'
+            f'              </hp:ctrl>\n'
+            f'            </hp:run>\n'
+            f'            <hp:run charPrIDRef="0">\n'
+            f'              <hp:t> —</hp:t>\n'
+            f'            </hp:run>\n'
+            f'          </hp:p>\n'
+            f'        </hp:subList>\n'
+        )
+
         return (
             f'<hp:secPr id="0" textDirection="HORIZONTAL" spaceColumns="1134"'
             f' tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT"'
@@ -487,6 +521,9 @@ class EbookHwpxGenerator:
             f' textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER">\n'
             f'        <hp:offset left="1417" right="1417" top="1417" bottom="1417"/>\n'
             f'      </hp:pageBorderFill>\n'
+            f'      <hp:footerPr id="0" createItemType="BOTH">\n'
+            + footer_para
+            + f'      </hp:footerPr>\n'
             f'    </hp:secPr>'
         )
 
