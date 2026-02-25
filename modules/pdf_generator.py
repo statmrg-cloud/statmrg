@@ -930,12 +930,6 @@ class EbookDocxGenerator:
         from docx.oxml import OxmlElement
 
         doc = Document()
-        # 파일 열 때 필드(PAGEREF 등) 자동 갱신 설정
-        settings_el = doc.settings.element
-        update_el = OxmlElement('w:updateFields')
-        update_el.set(qn('w:val'), 'true')
-        settings_el.append(update_el)
-
         section = doc.sections[0]
         section.page_width = Cm(21.0)
         section.page_height = Cm(29.7)
@@ -992,86 +986,63 @@ class EbookDocxGenerator:
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
 
-        # PAGEREF 필드를 삽입하는 헬퍼 (Word가 자동으로 정확한 페이지번호 계산)
-        def _add_pageref_field(paragraph, bookmark_name, font_size, default_text='?'):
-            """PAGEREF 필드 삽입: Word가 열 때 자동으로 실제 페이지번호로 갱신"""
-            # fldChar begin
-            r_begin = paragraph.add_run()
-            fld_begin = OxmlElement('w:fldChar')
-            fld_begin.set(qn('w:fldCharType'), 'begin')
-            r_begin._r.append(fld_begin)
-            # instrText: PAGEREF _chN \h
-            r_instr = paragraph.add_run()
-            instr_el = OxmlElement('w:instrText')
-            instr_el.set(qn('xml:space'), 'preserve')
-            instr_el.text = f' PAGEREF {bookmark_name} \\h '
-            r_instr._r.append(instr_el)
-            # fldChar separate
-            r_sep = paragraph.add_run()
-            fld_sep = OxmlElement('w:fldChar')
-            fld_sep.set(qn('w:fldCharType'), 'separate')
-            r_sep._r.append(fld_sep)
-            # 기본 표시 텍스트 (추정 페이지번호 — Word가 열 때 실제값으로 갱신)
-            r_default = paragraph.add_run(str(default_text))
-            r_default.font.size = font_size
-            r_default.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-            # fldChar end
-            r_end = paragraph.add_run()
-            fld_end = OxmlElement('w:fldChar')
-            fld_end.set(qn('w:fldCharType'), 'end')
-            r_end._r.append(fld_end)
-
-        # ── 페이지번호 추정 (PAGEREF 기본값 + pt 기반 시뮬레이션) ──
-        # ml/mr/mt/mb는 cm 단위 (config pt → /72*2.54 변환됨)
-        # cm → pt: *72/2.54
+        # ── 페이지번호 추정 (DOCX 렌더링 특화 pt 기반 시뮬레이션) ──
+        # ml/mr/mt/mb는 cm 단위 (config pt → /72*2.54 변환됨) → pt로 역변환
         ml_pt = ml * 72 / 2.54
         mr_pt = mr * 72 / 2.54
         mt_pt = mt * 72 / 2.54
         mb_pt = mb * 72 / 2.54
         page_w_pt = 595.28 - ml_pt - mr_pt
-        page_h_pt = 841.86 - mt_pt - mb_pt
+        page_h_pt = 841.89 - mt_pt - mb_pt
         n_chapters = len(book_info.get('chapters', []))
 
-        # 스타일별 높이 (pt)
-        body_line_h = fs * ls + 2.0  # 본문 줄 + 단락간격
-        h1_h = hs * ls + 12.0  # H1 높이 (≈heading font 줄간격 + 상하마진)
-        h2_h = ss * ls + 6.0   # H2 높이
-        empty_h = fs * ls + 2.0
-        toc_item_h = fs * ls + 2.0
-        cpl = max(1, int(page_w_pt / fs))  # 줄당 글자 수
+        # Word 스타일별 높이 (pt) — Word의 기본 Heading 스타일 spacing 반영
+        # Heading 1: before=12pt, line=font*1.08, after=0pt
+        # Heading 2: before=2pt, line=font*1.08, after=0pt
+        # Heading 3: before=2pt, line=font*1.08, after=0pt
+        # Normal: line=font*1.08, after=8pt (python-docx default)
+        # 명시적 line_spacing=ls 설정 시: line=font*ls, after=8pt
+        word_h1_h = 12.0 + hs * 1.08  # Heading 1 (hs pt font)
+        word_h1_22_h = 12.0 + 22 * 1.08  # 목차 Heading 1 (22pt)
+        word_h1_20_h = 12.0 + 20 * 1.08  # 프롤로그/에필로그 Heading 1 (20pt)
+        word_h2_h = 2.0 + ss * 1.08   # Heading 2 (ss pt font)
+        word_h2_12_h = 2.0 + 12 * 1.08  # 챕터 라벨 Heading 2 (12pt)
+        word_h3_h = 2.0 + 12 * 1.08   # Heading 3 (default ~12pt)
+        body_line_h = fs * ls + 8.0    # 본문 단락: 줄 + after=8pt
+        empty_para_h = 11 * 1.08 + 8.0  # 빈 단락 (default Normal style)
+        toc_item_h = fs * ls + 8.0     # 목차 항목 단락
+        cpl = max(1, int(page_w_pt / fs))  # 줄당 전각 글자 수
 
-        def _text_h(text):
+        def _para_h(text, font_size=None, line_sp=None):
+            """단일 단락의 높이 (단락 내 줄바꿈은 soft break)"""
             if not text:
-                return 0.0
-            h = 0.0
+                return empty_para_h
+            f = font_size or fs
+            l = line_sp or ls
+            c = max(1, int(page_w_pt / f))
+            n_lines = 0
             for ln in text.split('\n'):
                 s = ln.strip()
-                if not s:
-                    h += empty_h
-                else:
-                    h += max(1, -(-len(s) // cpl)) * (fs * ls) + 2.0
-            return h
+                n_lines += max(1, -(-len(s) // c)) if s else 1
+            return n_lines * (f * l) + 8.0
 
-        def _content_h(text):
-            """챕터 본문 높이: H2/라벨/불릿 등 스타일별 높이 반영"""
+        def _docx_content_h(text):
+            """DOCX 챕터 본문 높이 — DOCX 파싱 로직 미러링.
+            DOCX는 == heading == 만 Heading2로 처리하고, 나머지는 모두 일반 단락."""
             if not text:
                 return 0.0
             h = 0.0
-            cpl_ss = max(1, int(page_w_pt / ss))
             for raw in text.split('\n'):
                 s = raw.strip()
                 if not s:
-                    h += empty_h; continue
-                if re.match(r'^={2,}\s*(.+?)\s*={2,}$', s):
-                    h += h2_h; continue
-                bm = re.match(r'^\[([^\]]{2,20})\]\s*(.*)', s)
-                if bm:
-                    h += body_line_h  # bold label
-                    rest = bm.group(2).strip()
-                    if rest:
-                        h += max(1, -(-len(rest) // cpl)) * (fs * ls) + 2.0
+                    h += empty_para_h
                     continue
-                h += max(1, -(-len(s) // cpl)) * (fs * ls) + 2.0
+                if re.match(r'^={2,}\s*(.+?)\s*={2,}$', s):
+                    h += word_h2_h  # add_heading(level=2) with ss font
+                    continue
+                # 일반 단락: paragraph with line_spacing=ls
+                n_lines = max(1, -(-len(s) // cpl))
+                h += n_lines * (fs * ls) + 8.0
             return h
 
         def _extra_pg(height):
@@ -1083,26 +1054,29 @@ class EbookDocxGenerator:
 
         # 목차 (page_break)
         cur_page += 1
-        toc_total_h = h1_h + empty_h + n_chapters * toc_item_h + empty_h
+        toc_total_h = word_h1_22_h + n_chapters * toc_item_h
         cur_page += _extra_pg(toc_total_h)
 
         # DOCX 순서: 프롤로그 → 가치요약 → 챕터
         prologue_text = ebook_data.get('prologue', '')
         if prologue_text and prologue_text.strip():
             cur_page += 1
-            cur_page += _extra_pg(h1_h + _text_h(prologue_text))
+            # 프롤로그는 단일 paragraph로 추가됨 (줄바꿈은 soft break)
+            cur_page += _extra_pg(word_h1_20_h + _para_h(prologue_text))
 
         analysis_data = ebook_data.get('analysis', {})
         if analysis_data:
             cur_page += 1
-            val_h = h1_h
+            val_h = word_h1_h  # '이 책이 주는 가치' heading
             problem = analysis_data.get('problem_solved', {})
             for key in ('time', 'money', 'emotion'):
                 val = problem.get(key, '')
                 if val:
-                    val_h += h2_h + _text_h(val)
+                    val_h += word_h3_h  # add_heading(level=3)
+                    val_h += _para_h(val)
             if analysis_data.get('why_pay'):
-                val_h += h2_h + _text_h(analysis_data['why_pay'])
+                val_h += word_h2_h  # add_heading(level=2)
+                val_h += _para_h(analysis_data['why_pay'])
             cur_page += _extra_pg(val_h)
 
         chapter_est_pages = {}
@@ -1111,11 +1085,19 @@ class EbookDocxGenerator:
             cur_page += 1
             chapter_est_pages[ch_num] = cur_page
             content = ch_data.get('content', '')
-            ch_total = body_line_h + h1_h + body_line_h * 2 + empty_h + _content_h(content)
-            cur_page += _extra_pg(ch_total)
+            chapter_obj = ch_data.get('chapter', {})
+            # CHAPTER N (H2, 12pt) + 제목 (H1, hs pt) + before + after + 빈줄 + 본문
+            ch_h = word_h2_12_h + word_h1_h
+            if chapter_obj.get('before_state'):
+                ch_h += _para_h(f"읽기 전: {chapter_obj['before_state']}", 10)
+            if chapter_obj.get('after_state'):
+                ch_h += _para_h(f"읽고 난 후: {chapter_obj['after_state']}", 10)
+            ch_h += empty_para_h  # doc.add_paragraph('')
+            ch_h += _docx_content_h(content)
+            cur_page += _extra_pg(ch_h)
 
-        # 목차 항목 (PAGEREF 필드로 실제 페이지번호 자동 연동, 추정값을 기본 표시)
-        for idx, ch in enumerate(book_info.get('chapters', [])):
+        # 목차 항목 (plain text 페이지번호)
+        for ch in book_info.get('chapters', []):
             ch_num = ch.get('chapter_num', '')
             p = doc.add_paragraph()
             # 탭 스톱 설정 (우측 정렬, 점선 리더)
@@ -1133,11 +1115,12 @@ class EbookDocxGenerator:
             r1.font.size = Pt(9); r1.font.color.rgb = RGBColor(0x88,0x88,0x88)
             r2 = p.add_run(f"CH.{ch_num}  {ch.get('title','')}")
             r2.font.size = Pt(fs)
-            # 탭 + PAGEREF 필드 (추정값 기본 표시, Word 열면 자동 갱신)
             r_tab = p.add_run('\t')
             r_tab.font.size = Pt(fs)
-            est_pg = chapter_est_pages.get(ch_num, '?')
-            _add_pageref_field(p, f'_ch{idx+1}', Pt(fs), default_text=est_pg)
+            est_pg = chapter_est_pages.get(ch_num, '')
+            r_pg = p.add_run(str(est_pg))
+            r_pg.font.size = Pt(fs)
+            r_pg.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
         doc.add_page_break()
 
         # 프롤로그
@@ -1167,27 +1150,15 @@ class EbookDocxGenerator:
                 for run in p.runs: run.font.size = Pt(fs)
             doc.add_page_break()
 
-        # 챕터 (각 챕터에 북마크 삽입 — 목차 PAGEREF 연동)
-        def _add_bookmark(paragraph, bm_name, bm_id):
-            """단락에 북마크(bookmarkStart + bookmarkEnd)를 추가"""
-            bm_start = OxmlElement('w:bookmarkStart')
-            bm_start.set(qn('w:id'), str(bm_id))
-            bm_start.set(qn('w:name'), bm_name)
-            paragraph._p.insert(0, bm_start)
-            bm_end = OxmlElement('w:bookmarkEnd')
-            bm_end.set(qn('w:id'), str(bm_id))
-            paragraph._p.append(bm_end)
-
+        # 챕터
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             chapter = ch_data.get('chapter', {})
             content = ch_data.get('content', '')
 
             h = doc.add_heading(f"CHAPTER {i+1}", level=2)
             for run in h.runs: run.font.size = Pt(12); run.font.color.rgb = RGBColor(0xaa,0xaa,0xaa)
-            # 챕터 제목에 북마크 추가 (목차 페이지 번호 연동)
             h2 = doc.add_heading(chapter.get('title',''), level=1)
             for run in h2.runs: run.font.size = Pt(hs)
-            _add_bookmark(h2, f'_ch{i+1}', i + 100)
 
             before = chapter.get('before_state','')
             after  = chapter.get('after_state','')
