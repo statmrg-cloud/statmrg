@@ -982,41 +982,41 @@ class EbookDocxGenerator:
             r2.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
         doc.add_page_break()
 
-        # 목차 (페이지 번호 포함 — PAGEREF 필드 사용)
+        # 목차 (추정 페이지번호 포함)
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
 
-        def _add_pageref_field(paragraph, bookmark_name):
-            """PAGEREF 필드를 단락에 추가 (Word에서 자동으로 페이지 번호로 치환)"""
-            run_dots = paragraph.add_run('  ')
-            run_dots.font.size = Pt(fs)
-            run_dots.font.color.rgb = RGBColor(0xcc,0xcc,0xcc)
-            # Tab + dotted leader 대신 PAGEREF 필드 코드 삽입
-            fld_begin = OxmlElement('w:fldChar')
-            fld_begin.set(qn('w:fldCharType'), 'begin')
-            r1 = paragraph.add_run()
-            r1._r.append(fld_begin)
-            instr = OxmlElement('w:instrText')
-            instr.set(qn('xml:space'), 'preserve')
-            instr.text = f' PAGEREF {bookmark_name} \\h '
-            r2 = paragraph.add_run()
-            r2._r.append(instr)
-            fld_sep = OxmlElement('w:fldChar')
-            fld_sep.set(qn('w:fldCharType'), 'separate')
-            r3 = paragraph.add_run()
-            r3._r.append(fld_sep)
-            r_num = paragraph.add_run('?')
-            r_num.font.size = Pt(fs)
-            r_num.font.color.rgb = RGBColor(0x55,0x55,0x55)
-            fld_end = OxmlElement('w:fldChar')
-            fld_end.set(qn('w:fldCharType'), 'end')
-            r4 = paragraph.add_run()
-            r4._r.append(fld_end)
+        # ── 페이지번호 추정 ──────────────────────────────────────
+        # A4 기준: 본문 영역 높이에서 행 수 × 폰트 크기로 1페이지 글자수 추정
+        # 한국어 A4 기준 약 600~700자/페이지 (여백, 줄간격 고려)
+        CHARS_PER_PAGE = 600
+        est_page = 2  # 표지(1p) + 목차 시작(2p)
+        # 목차 자체가 차지하는 페이지 (챕터 수에 따라)
+        n_chapters = len(book_info.get('chapters', []))
+        est_page += max(1, (n_chapters + 15) // 16)  # ~16 항목/페이지
 
-        # 목차 항목에 탭 + 페이지 번호 필드 추가
+        # 프롤로그
+        prologue_text = ebook_data.get('prologue', '')
+        if prologue_text and prologue_text.strip():
+            est_page += max(1, len(prologue_text) // CHARS_PER_PAGE)
+
+        # 분석/가치 요약
+        analysis_text = ebook_data.get('analysis', {})
+        if analysis_text:
+            est_page += 1
+
+        # 각 챕터 시작 페이지 추정
+        chapter_est_pages = {}
+        for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
+            ch_num = book_info.get('chapters', [{}])[i].get('chapter_num', i + 1) if i < n_chapters else i + 1
+            chapter_est_pages[ch_num] = est_page
+            content = ch_data.get('content', '')
+            # 챕터 내용 길이 기반 페이지 추정
+            est_page += max(1, len(content) // CHARS_PER_PAGE)
+
+        # 목차 항목에 탭 + 추정 페이지 번호 추가
         for ch in book_info.get('chapters', []):
             ch_num = ch.get('chapter_num', '')
-            bm_name = f'_ch{ch_num}'
             p = doc.add_paragraph()
             # 탭 스톱 설정 (우측 정렬, 점선 리더)
             pPr = p._p.get_or_add_pPr()
@@ -1034,10 +1034,13 @@ class EbookDocxGenerator:
             r1.font.size = Pt(9); r1.font.color.rgb = RGBColor(0x88,0x88,0x88)
             r2 = p.add_run(f"CH.{ch_num}  {ch.get('title','')}")
             r2.font.size = Pt(fs)
-            # 탭 문자 삽입 + PAGEREF 필드
+            # 탭 + 추정 페이지 번호 (plain text)
             r_tab = p.add_run('\t')
             r_tab.font.size = Pt(fs)
-            _add_pageref_field(p, bm_name)
+            pg_num = chapter_est_pages.get(ch_num, '')
+            r_pg = p.add_run(str(pg_num))
+            r_pg.font.size = Pt(fs)
+            r_pg.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
         doc.add_page_break()
 
         # 프롤로그
@@ -1333,9 +1336,10 @@ class EbookPptxGenerator:
         self._txt(slide, f"  총 {total_chapters}개 챕터  ·  실전 완전 가이드",
                   0.67, 5.9, 3.75, 0.48, size=13, color='#90b8d8')
 
-    def _slide_toc(self, prs, chapters):
+    def _slide_toc(self, prs, chapters, chapter_slide_nums=None):
         from pptx.enum.text import PP_ALIGN
         W, H = self.SLIDE_W, self.SLIDE_H
+        chapter_slide_nums = chapter_slide_nums or {}
         # 챕터 수에 따라 1~2 슬라이드 분할
         half = (len(chapters) + 1) // 2
         for page_idx, chunk in enumerate([chapters[:half], chapters[half:]]):
@@ -1367,16 +1371,22 @@ class EbookPptxGenerator:
                 self._txt(slide, str(num), self.MX - 0.05, y + 0.06,
                           0.55, row_h - 0.12,
                           size=13, bold=True, color='#FFFFFF', align=PP_ALIGN.CENTER)
-                # 챕터 제목 (잘리지 않게 넉넉히)
-                self._txt(slide, ch_title[:65], self.MX + 0.6, y,
-                          W - self.MX * 2 - 1.8, row_h,
+                # 챕터 제목
+                self._txt(slide, ch_title[:60], self.MX + 0.6, y,
+                          W - self.MX * 2 - 2.4, row_h,
                           size=15, color='#1a1a2e', wrap=True)
                 # 단계 태그
                 if phase:
-                    self._rect(slide, W - self.MX - 1.3, y + (row_h - 0.38) / 2,
-                               1.25, 0.38, '#dde3ef')
-                    self._txt(slide, phase, W - self.MX - 1.3, y + (row_h - 0.38) / 2,
-                              1.25, 0.38, size=11, bold=True, color=pcol,
+                    self._rect(slide, W - self.MX - 1.8, y + (row_h - 0.38) / 2,
+                               1.05, 0.38, '#dde3ef')
+                    self._txt(slide, phase, W - self.MX - 1.8, y + (row_h - 0.38) / 2,
+                              1.05, 0.38, size=10, bold=True, color=pcol,
+                              align=PP_ALIGN.CENTER)
+                # 슬라이드 번호 (우측)
+                pg = chapter_slide_nums.get(num, '')
+                if pg:
+                    self._txt(slide, str(pg), W - self.MX - 0.6, y + (row_h - 0.38) / 2,
+                              0.55, 0.38, size=12, bold=True, color='#667799',
                               align=PP_ALIGN.CENTER)
                 y += row_h + 0.03
 
@@ -1639,11 +1649,32 @@ class EbookPptxGenerator:
         chapters = book_info.get('chapters', [])
         self._slide_num = 0  # 슬라이드 번호 추적
 
+        # ── 슬라이드 번호 사전 계산 (목차에 표시할 각 챕터 시작 슬라이드) ──
+        slide_idx = 1  # 표지 = 슬라이드 1
+        # 목차 슬라이드 수 계산
+        half = (len(chapters) + 1) // 2
+        toc_count = sum(1 for chunk in [chapters[:half], chapters[half:]] if chunk)
+        slide_idx += toc_count
+
+        # 프롤로그
+        prologue_text = ebook_data.get('prologue', '')
+        if prologue_text and prologue_text.strip():
+            slide_idx += 1
+
+        # 각 챕터 시작 슬라이드 번호 계산
+        chapter_slide_nums = {}
+        for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
+            ch_num = chapters[i].get('chapter_num', i + 1) if i < len(chapters) else i + 1
+            chapter_slide_nums[ch_num] = slide_idx + 1  # 1-based 표시 번호
+            content = ch_data.get('content', '')
+            sections = self._parse_sections(content)
+            slide_idx += 1 + len(sections)  # 챕터 인트로 + 섹션 슬라이드
+
         # 1. 표지
         self._slide_cover(prs, title, subtitle, len(chapters))
 
         # 2. 목차 (슬라이드 번호 포함)
-        self._slide_toc(prs, chapters)
+        self._slide_toc(prs, chapters, chapter_slide_nums)
 
         # 3. 프롤로그
         prologue = ebook_data.get('prologue', '')

@@ -447,39 +447,6 @@ class EbookHwpxGenerator:
         hdr = _mm_to_hwp(15)
         ftr = _mm_to_hwp(15)
 
-        # 바닥글(footer) 영역: 페이지 번호 표시
-        # OWPML fieldType 5 = PAGE_NUM (현재 페이지 번호)
-        footer_pid = self._new_pid()
-        footer_para = (
-            f'        <hp:subList id="0" textDirection="HORIZONTAL" lineWrap="BREAK"'
-            f' vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0"'
-            f' textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">\n'
-            f'          <hp:p id="{footer_pid}" paraPrIDRef="0" styleIDRef="0"'
-            f' pageBreak="0" columnBreak="0" merged="0">\n'
-            f'            <hp:run charPrIDRef="0">\n'
-            f'              <hp:t>— </hp:t>\n'
-            f'            </hp:run>\n'
-            f'            <hp:run charPrIDRef="0">\n'
-            f'              <hp:ctrl>\n'
-            f'                <hp:fieldBegin type="PAGE" name="쪽 번호" instId="1"'
-            f' fieldid="0" command="PAGE \\* Arabic"/>\n'
-            f'              </hp:ctrl>\n'
-            f'            </hp:run>\n'
-            f'            <hp:run charPrIDRef="0">\n'
-            f'              <hp:t>1</hp:t>\n'
-            f'            </hp:run>\n'
-            f'            <hp:run charPrIDRef="0">\n'
-            f'              <hp:ctrl>\n'
-            f'                <hp:fieldEnd type="PAGE"/>\n'
-            f'              </hp:ctrl>\n'
-            f'            </hp:run>\n'
-            f'            <hp:run charPrIDRef="0">\n'
-            f'              <hp:t> —</hp:t>\n'
-            f'            </hp:run>\n'
-            f'          </hp:p>\n'
-            f'        </hp:subList>\n'
-        )
-
         return (
             f'<hp:secPr id="0" textDirection="HORIZONTAL" spaceColumns="1134"'
             f' tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT"'
@@ -521,9 +488,6 @@ class EbookHwpxGenerator:
             f' textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER">\n'
             f'        <hp:offset left="1417" right="1417" top="1417" bottom="1417"/>\n'
             f'      </hp:pageBorderFill>\n'
-            f'      <hp:footerPr id="0" createItemType="BOTH">\n'
-            + footer_para
-            + f'      </hp:footerPr>\n'
             f'    </hp:secPr>'
         )
 
@@ -604,6 +568,18 @@ class EbookHwpxGenerator:
 
     def _empty(self):
         return self._make_para('', para_pr_id=0, char_pr_id=0, style_id=0)
+
+    def _page_num_para(self, num):
+        """페이지 하단에 표시할 페이지 번호 단락 (중앙 정렬, 작은 회색 글씨)"""
+        pid = self._new_pid()
+        return (
+            f'  <hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0"'
+            f' pageBreak="0" columnBreak="0" merged="0">\n'
+            f'    <hp:run charPrIDRef="3">\n'
+            f'      <hp:t>— {num} —</hp:t>\n'
+            f'    </hp:run>\n'
+            f'  </hp:p>\n'
+        )
 
     # ================================================================
     # section0.xml 전체 조립
@@ -686,14 +662,43 @@ class EbookHwpxGenerator:
         if analysis.get('target_reader'):
             paras.append(self._body(f"대상 독자: {analysis['target_reader']}"))
 
-        # 목차
+        # 목차 (추정 페이지번호 포함)
         paras.append(self._h1('목  차', page_break=True))
         chapters = book_info.get('chapters', [])
+
+        # ── 페이지번호 추정 (HWPX는 렌더링 불가 → 텍스트 추정) ──
+        CHARS_PER_PAGE = 600  # 한국어 A4 기준 약 600자/페이지
+        est_page = 2  # 표지(1p) + 목차 시작(2p)
+        n_chapters = len(chapters)
+        est_page += max(1, (n_chapters + 15) // 16)  # 목차 자체 페이지
+
+        # 프롤로그
+        prologue_tmp = ebook_data.get('prologue', '')
+        if prologue_tmp and prologue_tmp.strip():
+            est_page += max(1, len(prologue_tmp) // CHARS_PER_PAGE)
+
+        # 분석/가치 요약
+        if ebook_data.get('analysis', {}):
+            est_page += 1
+
+        # 각 챕터 시작 페이지 추정
+        chapter_est_pages = {}
+        for ci, ch_data in enumerate(ebook_data.get('chapters_content', [])):
+            ch_num = chapters[ci].get('chapter_num', ci + 1) if ci < n_chapters else ci + 1
+            chapter_est_pages[ch_num] = est_page
+            content_tmp = ch_data.get('content', '')
+            est_page += max(1, len(content_tmp) // CHARS_PER_PAGE)
+
         for ch in chapters:
             phase    = ch.get('phase', '')
             num      = ch.get('chapter_num', '')
             ch_title = ch.get('title', '')
-            paras.append(self._toc(f"[{phase}]  CHAPTER {num}  {ch_title}"))
+            pg_num   = chapter_est_pages.get(num, '')
+            # 점선 + 페이지번호 형태로 표시
+            dots = '·' * max(2, 40 - len(f"[{phase}]  CHAPTER {num}  {ch_title}"))
+            paras.append(self._toc(
+                f"[{phase}]  CHAPTER {num}  {ch_title}  {dots} {pg_num}"
+            ))
         paras.append(self._empty())
 
         # 가치 요약
@@ -793,8 +798,22 @@ class EbookHwpxGenerator:
                     if value.get(key):
                         paras.append(self._bullet(f"{lbl}: {value[key]}"))
 
+        # ── 페이지 번호 삽입 (page_break 직전에 번호 단락 추가) ──
+        final_paras = []
+        page_counter = 1
+        for para_xml in paras:
+            if 'pageBreak="1"' in para_xml:
+                # 이 단락이 새 페이지를 시작 → 직전 페이지 끝에 번호 삽입
+                if page_counter > 1:  # 표지(1p)는 번호 생략
+                    final_paras.append(self._page_num_para(page_counter))
+                page_counter += 1
+            final_paras.append(para_xml)
+        # 마지막 페이지 번호
+        if page_counter > 1:
+            final_paras.append(self._page_num_para(page_counter))
+
         # ── XML 조립 ──────────────────────────────────────────────
-        content_xml = ''.join(paras)
+        content_xml = ''.join(final_paras)
         section_xml = self._section_xml(
             content_xml, page_w, page_h, ml_hwp, mr_hwp, mt_hwp, mb_hwp
         )
