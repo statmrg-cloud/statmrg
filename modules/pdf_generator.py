@@ -966,6 +966,12 @@ class EbookDocxGenerator:
         ss = self.config.get('pdf_subheading_size', 13)
         ls = self.config.get('pdf_line_spacing', 1.6)
 
+        def _page_break_before(paragraph):
+            """단락에 pageBreakBefore 속성 추가 — 빈 단락 없이 새 페이지 시작"""
+            pPr = paragraph._p.get_or_add_pPr()
+            pb = OxmlElement('w:pageBreakBefore')
+            pPr.append(pb)
+
         # 표지
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -980,10 +986,10 @@ class EbookDocxGenerator:
             r2 = p2.add_run(subtitle)
             r2.font.size = Pt(14)
             r2.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
-        doc.add_page_break()
 
         # 목차 (추정 페이지번호 포함)
         h = doc.add_heading('목차', level=1)
+        _page_break_before(h)
         for run in h.runs: run.font.size = Pt(22)
 
         # ── 페이지번호 추정 (DOCX 렌더링 특화 pt 기반 시뮬레이션) ──
@@ -1126,22 +1132,22 @@ class EbookDocxGenerator:
             r_pg = p.add_run(str(est_pg))
             r_pg.font.size = Pt(fs)
             r_pg.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-        doc.add_page_break()
 
         # 프롤로그
         prologue = ebook_data.get('prologue', '')
         if prologue and prologue.strip():
             h = doc.add_heading('프롤로그', level=1)
+            _page_break_before(h)
             for run in h.runs: run.font.size = Pt(20)
             p = doc.add_paragraph(prologue)
             p.paragraph_format.line_spacing = ls
             for run in p.runs: run.font.size = Pt(fs)
-            doc.add_page_break()
 
         # 가치 요약
         analysis = ebook_data.get('analysis', {})
         if analysis:
             h = doc.add_heading('이 책이 주는 가치', level=1)
+            _page_break_before(h)
             problem = analysis.get('problem_solved', {})
             for label, key in [('시간 절약','time'),('비용 절감','money'),('감정적 해방','emotion')]:
                 doc.add_heading(label, level=3)
@@ -1153,7 +1159,6 @@ class EbookDocxGenerator:
                 p = doc.add_paragraph(analysis['why_pay'])
                 p.paragraph_format.line_spacing = ls
                 for run in p.runs: run.font.size = Pt(fs)
-            doc.add_page_break()
 
         # 챕터
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
@@ -1161,6 +1166,7 @@ class EbookDocxGenerator:
             content = ch_data.get('content', '')
 
             h = doc.add_heading(f"CHAPTER {i+1}", level=2)
+            _page_break_before(h)
             for run in h.runs: run.font.size = Pt(12); run.font.color.rgb = RGBColor(0xaa,0xaa,0xaa)
             h2 = doc.add_heading(chapter.get('title',''), level=1)
             for run in h2.runs: run.font.size = Pt(hs)
@@ -1191,22 +1197,21 @@ class EbookDocxGenerator:
                 p.paragraph_format.line_spacing = ls
                 for run in p.runs: run.font.size = Pt(fs)
 
-            doc.add_page_break()
-
         # 에필로그
         epilogue = ebook_data.get('epilogue', '')
         if epilogue and epilogue.strip():
             h = doc.add_heading('에필로그', level=1)
+            _page_break_before(h)
             for run in h.runs: run.font.size = Pt(20)
             p = doc.add_paragraph(epilogue)
             p.paragraph_format.line_spacing = ls
             for run in p.runs: run.font.size = Pt(fs)
-            doc.add_page_break()
 
         # 마케팅
         marketing = ebook_data.get('marketing', {})
         if marketing:
-            doc.add_heading('부록: 이 책에 대하여', level=1)
+            h_mkt = doc.add_heading('부록: 이 책에 대하여', level=1)
+            _page_break_before(h_mkt)
             if marketing.get('sales_copy'):
                 doc.add_heading('판매 소개문', level=2)
                 p = doc.add_paragraph(marketing['sales_copy'])
@@ -1280,9 +1285,11 @@ class EbookDocxGenerator:
                             has_pb = True
                             break
 
+            page_start = False  # 이 단락이 새 페이지 시작인지
             if has_pb:
                 cur_page += 1
                 cur_y = 0.0
+                page_start = True
                 if not text.strip():
                     continue
 
@@ -1315,6 +1322,10 @@ class EbookDocxGenerator:
             before_pt = sp_before if sp_before is not None else s_def.get('before', 0.0)
             after_pt = sp_after if sp_after is not None else s_def.get('after', def_after)
 
+            # Word는 페이지 시작에서 before spacing을 무시 (collapse)
+            if page_start or cur_y == 0.0:
+                before_pt = 0.0
+
             if sp_line is not None:
                 if sp_rule == 'auto' or sp_rule is None:
                     line_mult = sp_line / 240.0
@@ -1340,6 +1351,8 @@ class EbookDocxGenerator:
             if cur_y + para_h > page_h_pt and cur_y > 0:
                 cur_page += 1
                 cur_y = 0.0
+                before_pt = 0.0  # 새 페이지 시작에서 before spacing 무시
+                para_h = (n_lines * single_line_h) + after_pt
 
             cur_y += para_h
 
