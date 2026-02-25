@@ -986,30 +986,57 @@ class EbookDocxGenerator:
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
 
-        # ── 페이지번호 추정 (명시적 page_break 기반 정확 추적) ──
-        # A4 본문 영역: ~698pt, 11pt × 1.6 줄간격 = 17.6pt/줄 → ~39줄
-        # 한국어 ~35자/줄 → ~1300자/페이지 (제목, 빈줄 감안 → 800)
-        CHARS_PER_PAGE = 800
+        # ── 페이지번호 추정 (줄 수 기반 정밀 추정) ──
+        # A4 본문: (841.86-72*2)pt ≈ 698pt, 11pt×1.6=17.6pt/줄 → ~39줄
+        # 한국어 ~35자/줄, 제목/여백 감안 36줄/페이지
+        LINES_PER_PAGE = 36
+        CHARS_PER_LINE = 35
         n_chapters = len(book_info.get('chapters', []))
+
+        def _est_lines(text):
+            if not text:
+                return 0
+            lines = 0
+            for ln in text.split('\n'):
+                s = ln.strip()
+                if not s:
+                    lines += 1
+                else:
+                    lines += max(1, -(-len(s) // CHARS_PER_LINE))
+            return lines
+
+        def _extra_pages(lines, header_lines=3):
+            total = lines + header_lines
+            if total <= LINES_PER_PAGE:
+                return 0
+            return (total - 1) // LINES_PER_PAGE
+
         cur_page = 1  # 표지 = 1페이지
 
         # doc.add_page_break() 후 → 목차 시작
-        cur_page += 1  # 목차 페이지
-        # 목차 항목: 한 줄당 1항목, ~30항목/페이지 (여유 감안)
-        toc_extra = max(0, (n_chapters - 25) // 30)
-        cur_page += toc_extra
+        cur_page += 1
+        toc_lines = 3 + n_chapters
+        cur_page += _extra_pages(toc_lines, 0)
 
-        # doc.add_page_break() 후 → 프롤로그 또는 분석
+        # DOCX 순서: 프롤로그 → 가치요약 → 챕터
         prologue_text = ebook_data.get('prologue', '')
         if prologue_text and prologue_text.strip():
             cur_page += 1  # 프롤로그 시작 페이지
-            cur_page += max(0, (len(prologue_text) - CHARS_PER_PAGE) // CHARS_PER_PAGE)
-            # doc.add_page_break() 후
+            pro_lines = _est_lines(prologue_text)
+            cur_page += _extra_pages(pro_lines)
 
         analysis_data = ebook_data.get('analysis', {})
         if analysis_data:
             cur_page += 1  # 분석 시작 페이지
-            # doc.add_page_break() 후
+            val_lines = 5
+            problem = analysis_data.get('problem_solved', {})
+            for key in ('time', 'money', 'emotion'):
+                val = problem.get(key, '')
+                if val:
+                    val_lines += 2 + _est_lines(val)
+            if analysis_data.get('why_pay'):
+                val_lines += 2 + _est_lines(analysis_data['why_pay'])
+            cur_page += _extra_pages(val_lines, 0)
 
         # 각 챕터: doc.add_page_break() 로 분리됨
         chapter_est_pages = {}
@@ -1018,10 +1045,8 @@ class EbookDocxGenerator:
             cur_page += 1  # 새 페이지에서 챕터 시작
             chapter_est_pages[ch_num] = cur_page
             content = ch_data.get('content', '')
-            # 챕터 제목 + 메타정보 ~200자 + 본문
-            total_chars = len(content) + 200
-            cur_page += max(0, (total_chars - CHARS_PER_PAGE) // CHARS_PER_PAGE)
-            # 각 챕터 끝에 doc.add_page_break()
+            ch_lines = 6 + _est_lines(content)
+            cur_page += _extra_pages(ch_lines, 0)
 
         # 목차 항목에 탭 + 추정 페이지 번호 추가
         for ch in book_info.get('chapters', []):
