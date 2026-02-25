@@ -986,33 +986,42 @@ class EbookDocxGenerator:
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
 
-        # ── 페이지번호 추정 ──────────────────────────────────────
-        # A4 기준: 본문 영역 높이에서 행 수 × 폰트 크기로 1페이지 글자수 추정
-        # 한국어 A4 기준 약 600~700자/페이지 (여백, 줄간격 고려)
-        CHARS_PER_PAGE = 600
-        est_page = 2  # 표지(1p) + 목차 시작(2p)
-        # 목차 자체가 차지하는 페이지 (챕터 수에 따라)
+        # ── 페이지번호 추정 (명시적 page_break 기반 정확 추적) ──
+        # A4 본문 영역: ~698pt, 11pt × 1.6 줄간격 = 17.6pt/줄 → ~39줄
+        # 한국어 ~35자/줄 → ~1300자/페이지 (제목, 빈줄 감안 → 800)
+        CHARS_PER_PAGE = 800
         n_chapters = len(book_info.get('chapters', []))
-        est_page += max(1, (n_chapters + 15) // 16)  # ~16 항목/페이지
+        cur_page = 1  # 표지 = 1페이지
 
-        # 프롤로그
+        # doc.add_page_break() 후 → 목차 시작
+        cur_page += 1  # 목차 페이지
+        # 목차 항목: 한 줄당 1항목, ~30항목/페이지 (여유 감안)
+        toc_extra = max(0, (n_chapters - 25) // 30)
+        cur_page += toc_extra
+
+        # doc.add_page_break() 후 → 프롤로그 또는 분석
         prologue_text = ebook_data.get('prologue', '')
         if prologue_text and prologue_text.strip():
-            est_page += max(1, len(prologue_text) // CHARS_PER_PAGE)
+            cur_page += 1  # 프롤로그 시작 페이지
+            cur_page += max(0, (len(prologue_text) - CHARS_PER_PAGE) // CHARS_PER_PAGE)
+            # doc.add_page_break() 후
 
-        # 분석/가치 요약
-        analysis_text = ebook_data.get('analysis', {})
-        if analysis_text:
-            est_page += 1
+        analysis_data = ebook_data.get('analysis', {})
+        if analysis_data:
+            cur_page += 1  # 분석 시작 페이지
+            # doc.add_page_break() 후
 
-        # 각 챕터 시작 페이지 추정
+        # 각 챕터: doc.add_page_break() 로 분리됨
         chapter_est_pages = {}
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             ch_num = book_info.get('chapters', [{}])[i].get('chapter_num', i + 1) if i < n_chapters else i + 1
-            chapter_est_pages[ch_num] = est_page
+            cur_page += 1  # 새 페이지에서 챕터 시작
+            chapter_est_pages[ch_num] = cur_page
             content = ch_data.get('content', '')
-            # 챕터 내용 길이 기반 페이지 추정
-            est_page += max(1, len(content) // CHARS_PER_PAGE)
+            # 챕터 제목 + 메타정보 ~200자 + 본문
+            total_chars = len(content) + 200
+            cur_page += max(0, (total_chars - CHARS_PER_PAGE) // CHARS_PER_PAGE)
+            # 각 챕터 끝에 doc.add_page_break()
 
         # 목차 항목에 탭 + 추정 페이지 번호 추가
         for ch in book_info.get('chapters', []):
