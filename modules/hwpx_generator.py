@@ -587,18 +587,75 @@ class EbookHwpxGenerator:
         return self._make_para('', para_pr_id=0, char_pr_id=0, style_id=0)
 
     @staticmethod
-    def _estimate_lines(text, chars_per_line=35):
-        """텍스트가 차지하는 줄 수 추정 (한국어 기준 ~35자/줄)"""
+    def _calc_content_height_pt(text, fs=11, hs_size=16, ss_size=13, ls=1.6,
+                                 page_width_pt=475.28):
+        """챕터 본문의 총 높이(pt)를 계산 — 렌더링 파싱 로직을 정확히 미러링.
+        각 단락 스타일(H2, bold, body, bullet, empty)의 폰트 크기, 줄간격,
+        단락 마진(prev/next)을 반영하여 실제 렌더링 높이를 시뮬레이션한다.
+        """
         if not text:
-            return 0
-        lines = 0
-        for line in text.split('\n'):
-            stripped = line.strip()
+            return 0.0
+
+        # 줄당 전각 글자 수 (한글 기준: 1em = font_size pt)
+        chars_per_line = int(page_width_pt / fs)
+        chars_per_line_ss = int(page_width_pt / ss_size)
+
+        def _wrap_lines(s, cpl=chars_per_line):
+            return max(1, -(-len(s) // cpl))
+
+        # 단락 높이 계산 함수 (줄 수 * 줄높이 + prev마진 + next마진)
+        def _body_height(n_lines):
+            """본문 단락 (paraPr 0): next=2pt"""
+            return n_lines * (fs * ls) + 2.0
+
+        def _h2_height(n_lines):
+            """H2 단락 (paraPr 2): prev=6pt, next=3pt"""
+            return 6.0 + n_lines * (ss_size * ls) + 3.0
+
+        def _bold_height(n_lines):
+            """볼드 단락 (paraPr 0): next=2pt"""
+            return n_lines * (fs * ls) + 2.0
+
+        def _bullet_height(n_lines):
+            """불릿 단락 (paraPr 4): next=1pt"""
+            return n_lines * (fs * ls) + 1.0
+
+        def _empty_height():
+            """빈 단락: 1줄 높이 + next=2pt"""
+            return fs * ls + 2.0
+
+        total_pt = 0.0
+        for raw_line in text.split('\n'):
+            stripped = raw_line.strip()
             if not stripped:
-                lines += 1  # 빈 줄
-            else:
-                lines += max(1, -(-len(stripped) // chars_per_line))  # ceil division
-        return lines
+                total_pt += _empty_height()
+                continue
+            # == 소제목 == → H2
+            if re.match(r'^={2,}\s*(.+?)\s*={2,}$', stripped):
+                title_text = re.match(r'^={2,}\s*(.+?)\s*={2,}$', stripped).group(1)
+                total_pt += _h2_height(_wrap_lines(title_text, chars_per_line_ss))
+                continue
+            # [라벨] 텍스트 → bold + body
+            bm = re.match(r'^\[([^\]]{2,20})\]\s*(.*)', stripped)
+            if bm:
+                label_txt = f'[ {bm.group(1)} ]'
+                total_pt += _bold_height(_wrap_lines(label_txt))
+                rest = bm.group(2).strip()
+                if rest:
+                    total_pt += _body_height(_wrap_lines(rest))
+                continue
+            # 불릿
+            if re.match(r'^[-•●▶►✓]\s+', stripped):
+                total_pt += _bullet_height(_wrap_lines('• ' + stripped[2:].strip()))
+                continue
+            # 번호 리스트
+            m2 = re.match(r'^(\d+)[.)]\s+(.+)', stripped)
+            if m2:
+                total_pt += _bullet_height(_wrap_lines(f'• {m2.group(1)}. {m2.group(2)}'))
+                continue
+            # 일반 본문
+            total_pt += _body_height(_wrap_lines(stripped))
+        return total_pt
 
     # ================================================================
     # section0.xml 전체 조립
@@ -685,54 +742,70 @@ class EbookHwpxGenerator:
         paras.append(self._h1('목  차', page_break=True))
         chapters = book_info.get('chapters', [])
 
-        # ── 페이지번호 추정 (줄 수 기반 정밀 추정) ──
-        # A4 본문 영역: (841.86 - 72*2)pt ≈ 698pt
-        # 11pt × 1.6 줄간격 = 17.6pt/줄 → ~39줄/페이지
-        # 한국어 ~35자/줄 (A4 본문 너비 기준)
-        LINES_PER_PAGE = 36  # 제목/여백 감안하여 39에서 약간 줄임
-        CHARS_PER_LINE = 35
+        # ── 페이지번호 추정 (pt 기반 높이 시뮬레이션) ──
+        # A4 본문 영역: 너비 595.28-60-60=475.28pt, 높이 841.86-72-72=697.86pt
+        PAGE_H = 697.86  # 본문 영역 높이 (pt)
+        PAGE_W = 475.28  # 본문 영역 너비 (pt)
         n_chapters = len(chapters)
 
-        def _content_lines(text):
-            """콘텐츠 텍스트의 줄 수 추정"""
-            return self._estimate_lines(text, CHARS_PER_LINE)
+        # H1 높이: 16pt × 1.6 + prev=10pt + next=6pt
+        H1_HEIGHT = hs * ls + 10.0 + 6.0
+        # H2 높이: 13pt × 1.6 + prev=6pt + next=3pt
+        H2_HEIGHT = ss * ls + 6.0 + 3.0
+        # 본문 줄 높이: 11pt × 1.6 + next=2pt
+        BODY_LINE = fs * ls + 2.0
+        # 빈줄 높이
+        EMPTY_LINE = fs * ls + 2.0
+        # 목차 항목: 작은 줄간격 (next=1pt)
+        TOC_LINE = fs * ls + 1.0
 
-        def _pages_for_lines(lines, extra_header_lines=3):
-            """줄 수 → 차지 페이지 수 (현재 페이지 포함, 추가분만 반환)"""
-            total = lines + extra_header_lines  # 제목/여백 포함
-            if total <= LINES_PER_PAGE:
+        def _text_height(text):
+            """단순 본문 텍스트의 높이(pt)"""
+            if not text:
+                return 0.0
+            cpl = int(PAGE_W / fs)
+            h = 0.0
+            for ln in text.split('\n'):
+                s = ln.strip()
+                if not s:
+                    h += EMPTY_LINE
+                else:
+                    h += max(1, -(-len(s) // cpl)) * (fs * ls) + 2.0
+            return h
+
+        def _extra_pages_pt(height_pt):
+            """높이(pt) → 첫 페이지 이후 추가 페이지 수"""
+            if height_pt <= PAGE_H:
                 return 0
-            return (total - 1) // LINES_PER_PAGE  # 첫 페이지 제외한 추가 페이지
+            return int((height_pt - 0.1) / PAGE_H)
 
         cur_page = 1  # 표지 = 1페이지
 
         # 목차 (page_break → 새 페이지)
         cur_page += 1
-        # 목차: 제목 3줄 + 챕터당 1줄
-        toc_lines = 3 + n_chapters
-        cur_page += _pages_for_lines(toc_lines, 0)
+        toc_h = H1_HEIGHT + EMPTY_LINE + n_chapters * TOC_LINE + EMPTY_LINE
+        cur_page += _extra_pages_pt(toc_h)
 
         # 가치 요약 (page_break → 새 페이지)
         analysis_data = ebook_data.get('analysis', {})
         if analysis_data:
             cur_page += 1
-            # 가치 요약 내용 줄 수 추정
-            val_lines = 5  # 제목 + 소제목들
+            val_h = H1_HEIGHT
             problem = analysis_data.get('problem_solved', {})
             for key in ('time', 'money', 'emotion'):
                 val = problem.get(key, '')
                 if val:
-                    val_lines += 2 + _content_lines(val)
+                    val_h += H2_HEIGHT + _text_height(val)
             if analysis_data.get('why_pay'):
-                val_lines += 2 + _content_lines(analysis_data['why_pay'])
-            cur_page += _pages_for_lines(val_lines, 0)
+                val_h += H2_HEIGHT + _text_height(analysis_data['why_pay'])
+            cur_page += _extra_pages_pt(val_h)
 
         # 프롤로그 (page_break → 새 페이지)
         prologue_tmp = ebook_data.get('prologue', '')
         if prologue_tmp and prologue_tmp.strip():
             cur_page += 1
-            pro_lines = _content_lines(prologue_tmp)
-            cur_page += _pages_for_lines(pro_lines)
+            pro_h = H1_HEIGHT + _text_height(prologue_tmp)
+            cur_page += _extra_pages_pt(pro_h)
 
         # 각 챕터 (page_break → 새 페이지)
         chapter_est_pages = {}
@@ -741,10 +814,11 @@ class EbookHwpxGenerator:
             cur_page += 1  # 챕터 시작 (page_break=True)
             chapter_est_pages[ch_num] = cur_page
             content_tmp = ch_data.get('content', '')
-            chapter_obj = ch_data.get('chapter', {})
-            # 챕터: 라벨 1줄 + 제목 2줄 + before/after 2줄 + 빈줄 1줄 + 본문
-            ch_lines = 6 + _content_lines(content_tmp)
-            cur_page += _pages_for_lines(ch_lines, 0)
+            # 라벨(1줄) + H1 제목 + before + after + 빈줄 + 본문
+            ch_h = BODY_LINE + H1_HEIGHT + BODY_LINE + BODY_LINE + EMPTY_LINE
+            ch_h += self._calc_content_height_pt(
+                content_tmp, fs, hs, ss, ls, PAGE_W)
+            cur_page += _extra_pages_pt(ch_h)
 
         for ch in chapters:
             phase    = ch.get('phase', '')

@@ -930,6 +930,12 @@ class EbookDocxGenerator:
         from docx.oxml import OxmlElement
 
         doc = Document()
+        # 파일 열 때 필드(PAGEREF 등) 자동 갱신 설정
+        settings_el = doc.settings.element
+        update_el = OxmlElement('w:updateFields')
+        update_el.set(qn('w:val'), 'true')
+        settings_el.append(update_el)
+
         section = doc.sections[0]
         section.page_width = Cm(21.0)
         section.page_height = Cm(29.7)
@@ -986,70 +992,130 @@ class EbookDocxGenerator:
         h = doc.add_heading('목차', level=1)
         for run in h.runs: run.font.size = Pt(22)
 
-        # ── 페이지번호 추정 (줄 수 기반 정밀 추정) ──
-        # A4 본문: (841.86-72*2)pt ≈ 698pt, 11pt×1.6=17.6pt/줄 → ~39줄
-        # 한국어 ~35자/줄, 제목/여백 감안 36줄/페이지
-        LINES_PER_PAGE = 36
-        CHARS_PER_LINE = 35
+        # PAGEREF 필드를 삽입하는 헬퍼 (Word가 자동으로 정확한 페이지번호 계산)
+        def _add_pageref_field(paragraph, bookmark_name, font_size, default_text='?'):
+            """PAGEREF 필드 삽입: Word가 열 때 자동으로 실제 페이지번호로 갱신"""
+            # fldChar begin
+            r_begin = paragraph.add_run()
+            fld_begin = OxmlElement('w:fldChar')
+            fld_begin.set(qn('w:fldCharType'), 'begin')
+            r_begin._r.append(fld_begin)
+            # instrText: PAGEREF _chN \h
+            r_instr = paragraph.add_run()
+            instr_el = OxmlElement('w:instrText')
+            instr_el.set(qn('xml:space'), 'preserve')
+            instr_el.text = f' PAGEREF {bookmark_name} \\h '
+            r_instr._r.append(instr_el)
+            # fldChar separate
+            r_sep = paragraph.add_run()
+            fld_sep = OxmlElement('w:fldChar')
+            fld_sep.set(qn('w:fldCharType'), 'separate')
+            r_sep._r.append(fld_sep)
+            # 기본 표시 텍스트 (추정 페이지번호 — Word가 열 때 실제값으로 갱신)
+            r_default = paragraph.add_run(str(default_text))
+            r_default.font.size = font_size
+            r_default.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+            # fldChar end
+            r_end = paragraph.add_run()
+            fld_end = OxmlElement('w:fldChar')
+            fld_end.set(qn('w:fldCharType'), 'end')
+            r_end._r.append(fld_end)
+
+        # ── 페이지번호 추정 (PAGEREF 기본값 + pt 기반 시뮬레이션) ──
+        # ml/mr/mt/mb는 cm 단위 (config pt → /72*2.54 변환됨)
+        # cm → pt: *72/2.54
+        ml_pt = ml * 72 / 2.54
+        mr_pt = mr * 72 / 2.54
+        mt_pt = mt * 72 / 2.54
+        mb_pt = mb * 72 / 2.54
+        page_w_pt = 595.28 - ml_pt - mr_pt
+        page_h_pt = 841.86 - mt_pt - mb_pt
         n_chapters = len(book_info.get('chapters', []))
 
-        def _est_lines(text):
+        # 스타일별 높이 (pt)
+        body_line_h = fs * ls + 2.0  # 본문 줄 + 단락간격
+        h1_h = hs * ls + 12.0  # H1 높이 (≈heading font 줄간격 + 상하마진)
+        h2_h = ss * ls + 6.0   # H2 높이
+        empty_h = fs * ls + 2.0
+        toc_item_h = fs * ls + 2.0
+        cpl = max(1, int(page_w_pt / fs))  # 줄당 글자 수
+
+        def _text_h(text):
             if not text:
-                return 0
-            lines = 0
+                return 0.0
+            h = 0.0
             for ln in text.split('\n'):
                 s = ln.strip()
                 if not s:
-                    lines += 1
+                    h += empty_h
                 else:
-                    lines += max(1, -(-len(s) // CHARS_PER_LINE))
-            return lines
+                    h += max(1, -(-len(s) // cpl)) * (fs * ls) + 2.0
+            return h
 
-        def _extra_pages(lines, header_lines=3):
-            total = lines + header_lines
-            if total <= LINES_PER_PAGE:
+        def _content_h(text):
+            """챕터 본문 높이: H2/라벨/불릿 등 스타일별 높이 반영"""
+            if not text:
+                return 0.0
+            h = 0.0
+            cpl_ss = max(1, int(page_w_pt / ss))
+            for raw in text.split('\n'):
+                s = raw.strip()
+                if not s:
+                    h += empty_h; continue
+                if re.match(r'^={2,}\s*(.+?)\s*={2,}$', s):
+                    h += h2_h; continue
+                bm = re.match(r'^\[([^\]]{2,20})\]\s*(.*)', s)
+                if bm:
+                    h += body_line_h  # bold label
+                    rest = bm.group(2).strip()
+                    if rest:
+                        h += max(1, -(-len(rest) // cpl)) * (fs * ls) + 2.0
+                    continue
+                h += max(1, -(-len(s) // cpl)) * (fs * ls) + 2.0
+            return h
+
+        def _extra_pg(height):
+            if height <= page_h_pt:
                 return 0
-            return (total - 1) // LINES_PER_PAGE
+            return int((height - 0.1) / page_h_pt)
 
-        cur_page = 1  # 표지 = 1페이지
+        cur_page = 1  # 표지
 
-        # doc.add_page_break() 후 → 목차 시작
+        # 목차 (page_break)
         cur_page += 1
-        toc_lines = 3 + n_chapters
-        cur_page += _extra_pages(toc_lines, 0)
+        toc_total_h = h1_h + empty_h + n_chapters * toc_item_h + empty_h
+        cur_page += _extra_pg(toc_total_h)
 
         # DOCX 순서: 프롤로그 → 가치요약 → 챕터
         prologue_text = ebook_data.get('prologue', '')
         if prologue_text and prologue_text.strip():
-            cur_page += 1  # 프롤로그 시작 페이지
-            pro_lines = _est_lines(prologue_text)
-            cur_page += _extra_pages(pro_lines)
+            cur_page += 1
+            cur_page += _extra_pg(h1_h + _text_h(prologue_text))
 
         analysis_data = ebook_data.get('analysis', {})
         if analysis_data:
-            cur_page += 1  # 분석 시작 페이지
-            val_lines = 5
+            cur_page += 1
+            val_h = h1_h
             problem = analysis_data.get('problem_solved', {})
             for key in ('time', 'money', 'emotion'):
                 val = problem.get(key, '')
                 if val:
-                    val_lines += 2 + _est_lines(val)
+                    val_h += h2_h + _text_h(val)
             if analysis_data.get('why_pay'):
-                val_lines += 2 + _est_lines(analysis_data['why_pay'])
-            cur_page += _extra_pages(val_lines, 0)
+                val_h += h2_h + _text_h(analysis_data['why_pay'])
+            cur_page += _extra_pg(val_h)
 
-        # 각 챕터: doc.add_page_break() 로 분리됨
         chapter_est_pages = {}
         for i, ch_data in enumerate(ebook_data.get('chapters_content', [])):
             ch_num = book_info.get('chapters', [{}])[i].get('chapter_num', i + 1) if i < n_chapters else i + 1
-            cur_page += 1  # 새 페이지에서 챕터 시작
+            cur_page += 1
             chapter_est_pages[ch_num] = cur_page
             content = ch_data.get('content', '')
-            ch_lines = 6 + _est_lines(content)
-            cur_page += _extra_pages(ch_lines, 0)
+            ch_total = body_line_h + h1_h + body_line_h * 2 + empty_h + _content_h(content)
+            cur_page += _extra_pg(ch_total)
 
-        # 목차 항목에 탭 + 추정 페이지 번호 추가
-        for ch in book_info.get('chapters', []):
+        # 목차 항목 (PAGEREF 필드로 실제 페이지번호 자동 연동, 추정값을 기본 표시)
+        for idx, ch in enumerate(book_info.get('chapters', [])):
             ch_num = ch.get('chapter_num', '')
             p = doc.add_paragraph()
             # 탭 스톱 설정 (우측 정렬, 점선 리더)
@@ -1058,7 +1124,6 @@ class EbookDocxGenerator:
             tab_el = OxmlElement('w:tab')
             tab_el.set(qn('w:val'), 'right')
             tab_el.set(qn('w:leader'), 'dot')
-            # A4 폭(21cm) - 좌우여백으로 탭 위치 계산 (twips: 1cm = 567 twips)
             tab_pos = int((21.0 - ml - mr) * 567)
             tab_el.set(qn('w:pos'), str(tab_pos))
             tabs_el.append(tab_el)
@@ -1068,13 +1133,11 @@ class EbookDocxGenerator:
             r1.font.size = Pt(9); r1.font.color.rgb = RGBColor(0x88,0x88,0x88)
             r2 = p.add_run(f"CH.{ch_num}  {ch.get('title','')}")
             r2.font.size = Pt(fs)
-            # 탭 + 추정 페이지 번호 (plain text)
+            # 탭 + PAGEREF 필드 (추정값 기본 표시, Word 열면 자동 갱신)
             r_tab = p.add_run('\t')
             r_tab.font.size = Pt(fs)
-            pg_num = chapter_est_pages.get(ch_num, '')
-            r_pg = p.add_run(str(pg_num))
-            r_pg.font.size = Pt(fs)
-            r_pg.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+            est_pg = chapter_est_pages.get(ch_num, '?')
+            _add_pageref_field(p, f'_ch{idx+1}', Pt(fs), default_text=est_pg)
         doc.add_page_break()
 
         # 프롤로그
