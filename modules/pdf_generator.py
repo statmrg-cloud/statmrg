@@ -996,21 +996,26 @@ class EbookDocxGenerator:
         page_h_pt = 841.89 - mt_pt - mb_pt
         n_chapters = len(book_info.get('chapters', []))
 
-        # Word 스타일별 높이 (pt) — Word의 기본 Heading 스타일 spacing 반영
-        # Heading 1: before=12pt, line=font*1.08, after=0pt
-        # Heading 2: before=2pt, line=font*1.08, after=0pt
-        # Heading 3: before=2pt, line=font*1.08, after=0pt
-        # Normal: line=font*1.08, after=8pt (python-docx default)
-        # 명시적 line_spacing=ls 설정 시: line=font*ls, after=8pt
-        word_h1_h = 12.0 + hs * 1.08  # Heading 1 (hs pt font)
-        word_h1_22_h = 12.0 + 22 * 1.08  # 목차 Heading 1 (22pt)
-        word_h1_20_h = 12.0 + 20 * 1.08  # 프롤로그/에필로그 Heading 1 (20pt)
-        word_h2_h = 2.0 + ss * 1.08   # Heading 2 (ss pt font)
-        word_h2_12_h = 2.0 + 12 * 1.08  # 챕터 라벨 Heading 2 (12pt)
-        word_h3_h = 2.0 + 12 * 1.08   # Heading 3 (default ~12pt)
-        body_line_h = fs * ls + 8.0    # 본문 단락: 줄 + after=8pt
-        empty_para_h = 11 * 1.08 + 8.0  # 빈 단락 (default Normal style)
-        toc_item_h = fs * ls + 8.0     # 목차 항목 단락
+        # Word 스타일별 높이 (pt) — python-docx 기본 템플릿 실측 값
+        # docDefaults: after=10pt, line=1.15 (276/240)
+        # Heading 1: before=24pt, after=0pt, line=1.15 (상속)
+        # Heading 2: before=10pt, after=0pt, line=1.15
+        # Heading 3: before=10pt, after=0pt, line=1.15
+        # Normal: before=0pt, after=10pt, line=1.15
+        # 명시적 line_spacing=ls 설정 시: line=font*ls, after는 설정 안 함 → 10pt 유지
+        def_ls = 1.15  # docDefaults line spacing
+        def_after = 10.0  # docDefaults after spacing (200twips = 10pt)
+        word_h1_h = 24.0 + hs * def_ls   # 챕터 제목 Heading 1 (hs pt, font 명시)
+        word_h1_14_h = 24.0 + 14 * def_ls  # 가치요약/부록 Heading 1 (font 미설정 → 스타일 14pt)
+        word_h1_22_h = 24.0 + 22 * def_ls  # 목차 Heading 1 (22pt)
+        word_h1_20_h = 24.0 + 20 * def_ls  # 프롤로그/에필로그 Heading 1 (20pt)
+        word_h2_h = 10.0 + ss * def_ls    # 본문 Heading 2 (ss pt font, before=10pt)
+        word_h2_13_h = 10.0 + 13 * def_ls  # 가치요약 '왜 투자' Heading 2 (font 미설정 → 스타일 13pt)
+        word_h2_12_h = 10.0 + 12 * def_ls  # 챕터 라벨 Heading 2 (12pt)
+        word_h3_h = 10.0 + 11 * def_ls    # Heading 3 (font 미설정 → docDefaults 11pt)
+        body_line_h = fs * ls + def_after  # 본문 단락: 줄 + after=10pt
+        empty_para_h = 11 * def_ls + def_after  # 빈 단락 (default Normal)
+        toc_item_h = fs * def_ls + def_after  # 목차 항목: line_spacing 미설정 → docDefaults 1.15
         cpl = max(1, int(page_w_pt / fs))  # 줄당 전각 글자 수
 
         def _para_h(text, font_size=None, line_sp=None):
@@ -1024,7 +1029,7 @@ class EbookDocxGenerator:
             for ln in text.split('\n'):
                 s = ln.strip()
                 n_lines += max(1, -(-len(s) // c)) if s else 1
-            return n_lines * (f * l) + 8.0
+            return n_lines * (f * l) + def_after
 
         def _docx_content_h(text):
             """DOCX 챕터 본문 높이 — DOCX 파싱 로직 미러링.
@@ -1042,7 +1047,7 @@ class EbookDocxGenerator:
                     continue
                 # 일반 단락: paragraph with line_spacing=ls
                 n_lines = max(1, -(-len(s) // cpl))
-                h += n_lines * (fs * ls) + 8.0
+                h += n_lines * (fs * ls) + def_after
             return h
 
         def _extra_pg(height):
@@ -1067,15 +1072,14 @@ class EbookDocxGenerator:
         analysis_data = ebook_data.get('analysis', {})
         if analysis_data:
             cur_page += 1
-            val_h = word_h1_h  # '이 책이 주는 가치' heading
+            val_h = word_h1_14_h  # '이 책이 주는 가치' H1 (font 미설정 → 14pt)
             problem = analysis_data.get('problem_solved', {})
+            # 실제 빌드: label/key 항상 3개 (heading + paragraph) 추가 — val 유무 무관
             for key in ('time', 'money', 'emotion'):
-                val = problem.get(key, '')
-                if val:
-                    val_h += word_h3_h  # add_heading(level=3)
-                    val_h += _para_h(val)
+                val_h += word_h3_h  # add_heading(level=3, font 미설정 → 11pt)
+                val_h += _para_h(problem.get(key, ''))  # paragraph — 항상 추가
             if analysis_data.get('why_pay'):
-                val_h += word_h2_h  # add_heading(level=2)
+                val_h += word_h2_13_h  # add_heading(level=2, font 미설정 → 13pt)
                 val_h += _para_h(analysis_data['why_pay'])
             cur_page += _extra_pg(val_h)
 
@@ -1089,9 +1093,10 @@ class EbookDocxGenerator:
             # CHAPTER N (H2, 12pt) + 제목 (H1, hs pt) + before + after + 빈줄 + 본문
             ch_h = word_h2_12_h + word_h1_h
             if chapter_obj.get('before_state'):
-                ch_h += _para_h(f"읽기 전: {chapter_obj['before_state']}", 10)
+                # before_state 단락: font=10pt, line_spacing 미설정 → docDefaults 1.15
+                ch_h += _para_h(f"읽기 전: {chapter_obj['before_state']}", 10, def_ls)
             if chapter_obj.get('after_state'):
-                ch_h += _para_h(f"읽고 난 후: {chapter_obj['after_state']}", 10)
+                ch_h += _para_h(f"읽고 난 후: {chapter_obj['after_state']}", 10, def_ls)
             ch_h += empty_para_h  # doc.add_paragraph('')
             ch_h += _docx_content_h(content)
             cur_page += _extra_pg(ch_h)
@@ -1208,8 +1213,164 @@ class EbookDocxGenerator:
                 p.paragraph_format.line_spacing = ls
                 for run in p.runs: run.font.size = Pt(fs)
 
+        # ── 2패스 TOC 보정: 실제 paragraph 순회로 정확한 페이지 계산 후 TOC 업데이트 ──
+        self._fix_toc_pages(doc, page_w_pt, page_h_pt)
+
         doc.save(filepath)
         return filepath, filename
+
+    def _fix_toc_pages(self, doc, page_w_pt, page_h_pt):
+        """생성된 DOCX의 모든 paragraph를 순회하여 CHAPTER N의 실제 페이지 위치를 계산하고
+        목차 항목의 페이지번호를 정확한 값으로 업데이트합니다."""
+        from docx.oxml.ns import qn
+
+        fs = self.config.get('pdf_font_size', 11)
+        ls = self.config.get('pdf_line_spacing', 1.6)
+
+        # python-docx 기본 템플릿 실측 값
+        style_spacing = {
+            'Heading1': {'before': 24.0, 'after': 0.0},
+            'Heading2': {'before': 10.0, 'after': 0.0},
+            'Heading3': {'before': 10.0, 'after': 0.0},
+        }
+        def_after = 10.0  # docDefaults after spacing
+        def_ls = 1.15     # docDefaults line spacing (276/240)
+        def_font = 11.0   # docDefaults font size
+        style_fonts = {'Heading1': 14.0, 'Heading2': 13.0}
+
+        body = doc.element.body
+        paragraphs = body.findall(qn('w:p'))
+
+        cur_page = 1
+        cur_y = 0.0
+        chapter_actual_pages = {}  # {chapter_num: page}
+        toc_paragraphs = {}        # {chapter_num: paragraph_element}
+        in_toc = False
+
+        for p_elem in paragraphs:
+            # 텍스트 수집 (w:br soft break 포함)
+            texts = []
+            for child in p_elem.iter():
+                if child.tag == qn('w:t') and child.text:
+                    texts.append(child.text)
+                elif child.tag == qn('w:br'):
+                    if child.get(qn('w:type')) != 'page':
+                        texts.append('\n')
+            text = ''.join(texts)
+
+            # 스타일
+            style_name = None
+            pPr = p_elem.find(qn('w:pPr'))
+            if pPr is not None:
+                pStyle = pPr.find(qn('w:pStyle'))
+                if pStyle is not None:
+                    style_name = pStyle.get(qn('w:val'))
+
+            # 페이지 브레이크 확인
+            has_pb = False
+            for br in p_elem.iter(qn('w:br')):
+                if br.get(qn('w:type')) == 'page':
+                    has_pb = True
+                    break
+            if not has_pb and pPr is not None:
+                for child in pPr:
+                    if child.tag == qn('w:pageBreakBefore'):
+                        val = child.get(qn('w:val'), 'true')
+                        if val.lower() != 'false':
+                            has_pb = True
+                            break
+
+            if has_pb:
+                cur_page += 1
+                cur_y = 0.0
+                if not text.strip():
+                    continue
+
+            # font size (run에서 직접 읽기)
+            font_size = None
+            for r in p_elem.findall(qn('w:r')):
+                rPr = r.find(qn('w:rPr'))
+                if rPr is not None:
+                    sz = rPr.find(qn('w:sz'))
+                    if sz is not None:
+                        font_size = int(sz.get(qn('w:val'))) / 2.0
+                        break
+            if font_size is None:
+                font_size = style_fonts.get(style_name, def_font)
+
+            # spacing
+            sp_before = sp_after = sp_line = sp_rule = None
+            if pPr is not None:
+                sp = pPr.find(qn('w:spacing'))
+                if sp is not None:
+                    b = sp.get(qn('w:before'))
+                    if b: sp_before = int(b) / 20.0
+                    a = sp.get(qn('w:after'))
+                    if a: sp_after = int(a) / 20.0
+                    l = sp.get(qn('w:line'))
+                    if l: sp_line = int(l)
+                    sp_rule = sp.get(qn('w:lineRule'))
+
+            s_def = style_spacing.get(style_name, {})
+            before_pt = sp_before if sp_before is not None else s_def.get('before', 0.0)
+            after_pt = sp_after if sp_after is not None else s_def.get('after', def_after)
+
+            if sp_line is not None:
+                if sp_rule == 'auto' or sp_rule is None:
+                    line_mult = sp_line / 240.0
+                else:
+                    line_mult = def_ls
+            else:
+                line_mult = def_ls
+
+            single_line_h = font_size * line_mult
+
+            # 줄 수
+            if not text.strip():
+                n_lines = 1
+            else:
+                cpl = max(1, int(page_w_pt / font_size))
+                n_lines = 0
+                for ln in text.split('\n'):
+                    s = ln.strip()
+                    n_lines += max(1, -(-len(s) // cpl)) if s else 1
+
+            para_h = before_pt + (n_lines * single_line_h) + after_pt
+
+            if cur_y + para_h > page_h_pt and cur_y > 0:
+                cur_page += 1
+                cur_y = 0.0
+
+            cur_y += para_h
+
+            # 목차 영역 감지
+            if style_name == 'Heading1' and '목차' in text:
+                in_toc = True
+            elif style_name == 'Heading1' and text.strip() and '목차' not in text:
+                in_toc = False
+
+            # 목차 항목 수집
+            if in_toc and not (style_name and 'Heading' in str(style_name)):
+                m = re.search(r'CH\.(\d+)', text)
+                if m:
+                    toc_paragraphs[int(m.group(1))] = p_elem
+
+            # CHAPTER N heading 감지
+            if text.strip().startswith('CHAPTER '):
+                m = re.match(r'^CHAPTER\s+(\d+)', text.strip())
+                if m:
+                    chapter_actual_pages[int(m.group(1))] = cur_page
+
+        # TOC 항목 업데이트: 마지막 run의 텍스트를 실제 페이지번호로 교체
+        for ch_num, p_elem in toc_paragraphs.items():
+            actual_page = chapter_actual_pages.get(ch_num)
+            if actual_page is None:
+                continue
+            runs = p_elem.findall(qn('w:r'))
+            if runs:
+                last_run = runs[-1]
+                for t in last_run.findall(qn('w:t')):
+                    t.text = str(actual_page)
 
 
 # ============================================================
